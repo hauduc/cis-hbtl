@@ -1,0 +1,28 @@
+{
+    "id": "44676A4C",
+    "path": "/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/21_variance_across_cohort.Rmd",
+    "project_path": "21_variance_across_cohort.Rmd",
+    "type": "r_markdown",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1667423731332.0,
+    "source_on_save": false,
+    "relative_order": 3,
+    "properties": {
+        "tempName": "Untitled1",
+        "chunk_output_type": "inline",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "4,0",
+        "scrollLine": "0"
+    },
+    "folds": "56|6|82|0|\n85|6|133|0|\n136|6|180|0|\n",
+    "lastKnownWriteTime": 1667853637,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1667853637641,
+    "read_only": false,
+    "read_only_alternatives": []
+}

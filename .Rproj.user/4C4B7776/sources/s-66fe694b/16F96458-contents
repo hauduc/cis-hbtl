@@ -1,0 +1,86 @@
+# Start
+library(tidyverse)
+library(gdsfmt)
+library(SNPRelate)
+
+# Converting VCFs to gds file format
+snpgdsVCF2GDS("breast_normal_cohort_merged.vcf.gz", "breast_normal_cohort_merged.gds")
+
+# Opening GDS file
+breast_normal_cohort <- snpgdsOpen("breast_normal_cohort_merged.gds")
+
+# Checking summary info
+snpgdsSummary(breast_normal_cohort)
+get.attr.gdsn(index.gdsn(breast_normal_cohort, "snp.chromosome"))
+
+# Doing LD analysis
+snpset <- snpgdsLDpruning(breast_normal_cohort, ld.threshold=0.2)
+snpset %>% str()
+snpset %>% names()
+snpset.id <- snpset %>% unname() %>% unlist()
+snpset.id %>% head()
+
+# Creating the population codes
+pop_code <- c("14_17", 
+              "14_18", "14_18", "14_18", "14_18",
+              "11_18",
+              "22_18",
+              "24_18",
+              "38_18",
+              "30_18",
+              "15_18")
+
+pop_code_factor <- pop_code %>% as.factor()
+
+# PCA
+pca <- snpgdsPCA(breast_normal_cohort, snp.id=snpset.id, num.thread=16)
+
+pc.percent <- pca$varprop*100
+head(round(pc.percent, 2))
+tab <- data.frame(sample.id = pca$sample.id,
+                  EV1 = pca$eigenvect[,1],    # the first eigenvector
+                  EV2 = pca$eigenvect[,2],    # the second eigenvector
+                  stringsAsFactors = FALSE)
+head(tab)
+
+plot(tab$EV2, tab$EV1, xlab="eigenvector 2", ylab="eigenvector 1")
+
+sample.id <- read.gdsn(index.gdsn(breast_normal_cohort, "sample.id"))
+cbind(sample.id, pop_code)
+
+tab <- data.frame(sample.id = pca$sample.id,
+                  pop = factor(pop_code)[match(pca$sample.id, sample.id)],
+                  EV1 = pca$eigenvect[,1],    # the first eigenvector
+                  EV2 = pca$eigenvect[,2],    # the second eigenvector
+                  stringsAsFactors = FALSE)
+head(tab)
+
+plot(main = "Breast_normal WGS variant PCA", tab$EV2, tab$EV1, col=as.integer(tab$pop), xlab="eigenvector 2", ylab="eigenvector 1")
+legend("bottomright", legend=levels(tab$pop), pch="o", col=1:nlevels(tab$pop))
+
+# First four PCs
+lbls <- paste("PC", 1:4, "\n", format(pc.percent[1:4], digits=2), "%", sep="")
+pairs(pca$eigenvect[,1:4], col=tab$pop, labels=lbls)
+
+########
+
+# Cluster analysis
+
+set.seed(100)
+ibs.hc <- snpgdsHCluster(snpgdsIBS(breast_normal_cohort, num.thread=16))
+
+rv <- snpgdsCutTree(ibs.hc)
+
+plot(rv$dendrogram, leaflab="none", main="HapMap Phase II")
+
+rv2 <- snpgdsCutTree(ibs.hc, samp.group=as.factor(pop_code))
+plot(rv2$dendrogram, leaflab="none", main="Breast_normal WGS variant clustering", ylab="individual dissimilarity")
+legend("bottomright", legend=levels(pop_code_factor), col=1:nlevels(pop_code_factor), pch=19, ncol=1)
+
+
+rv2 %>% snpgdsDrawTree()
+
+
+
+# Close the GDS file
+snpgdsClose(genofile)

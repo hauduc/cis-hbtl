@@ -1,0 +1,7 @@
+"0","yan_pbSNPs %>% "
+"0","  filter(`rs number` %in% yan_pbSNP_cis_hBTL_rsIDs$LP |"
+"0","         `rs number` %in% yan_pbSNP_cis_hBTL_rsIDs$LC) %>% "
+"0","  gt() %>%"
+"0","  tab_options(heading.title.font.weight = ""bold"","
+"0","              column_labels.font.weight =  ""light"") %>% "
+"0","  gtsave(""plots/table_yan_pbSNP_cell_type_specific_top_hits.png"")"

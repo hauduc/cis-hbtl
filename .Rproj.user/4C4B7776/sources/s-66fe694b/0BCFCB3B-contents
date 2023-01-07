@@ -1,0 +1,102 @@
+#!/bin/bash
+
+######################################################################
+# Safe Mode Parameters
+######################################################################
+set -e
+set -u
+set -o pipefail
+
+######################################################################
+# Set threads
+######################################################################
+THREADS="128"
+
+######################################################################
+# hg38 and resources
+######################################################################
+REF="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/refs/hg38_no_alt.fa"
+CHROMINFO="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/refs/chrom_info/hg38_no_alt.chromsizes.txt"
+BLACKLIST="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/blacklists/hg38-blacklist.v2.bed"
+DBSNP="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/dbSNP/all/00-All_chr.vcf.gz"
+DBSNP_SNPS="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/dbSNP/snps/00-All_chr.snps.vcf.gz"
+ALL_1KG_PHASE3_INDELS="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/callsets/1kg/ALL.wgs.1000G_phase3.GRCh38.ncbi_remapper.20150424.shapeit2_indels_fixed.vcf.gz"
+MILLS_AND_1KG_GOLD_INDELS="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/callsets/mills_indels/resources_broad_hg38_v0_Mills_and_1000G_gold_standard.indels.hg38.vcf.gz"
+
+######################################################################
+# Set software packages employed & define dependencies
+######################################################################
+# Main tools
+BWA="/gsc/software/linux-x86_64-centos7/bwa-0.7.6a/bwa"
+SAMTOOLS="/gsc/software/linux-x86_64-centos7/samtools-1.10/bin/samtools"
+GATK="/home/ahauduc/software/gatk-4.1.4.1/gatk"
+PICARD="/gsc/software/linux-x86_64-centos7/picard-tools-2.4.1/picard.jar"
+BEDTOOLS="/gsc/software/linux-x86_64-centos7/bedtools-2.27.1/bin/bedtools"
+BCFTOOLS="/gsc/software/linux-x86_64-centos7/bcftools-1.11/bin/bcftools"
+TABIX="/home/ahauduc/anaconda3/bin/tabix"
+PYTHON="/home/ahauduc/software/Python-3.8.6/python"
+MACS2="/home/ahauduc/software/MACS2-2.2.7.1/bin/macs2"
+bedGraphToBigWig="/home/ahauduc/software/kentUtils/bedGraphToBigWig"
+HOMER="/home/ahauduc/software/homer"
+
+# Quality control
+FASTQC="/home/ahauduc/anaconda3/bin/fastqc"
+FASTP="/gsc/software/linux-x86_64-centos7/fastp-0.21.0/bin/fastp"
+
+# Virtualization
+JAVA="/gsc/software/linux-x86_64-centos6/jdk1.8.0_162/bin/java"
+
+# Phasing
+WHATSHAP="/gsc/software/linux-x86_64-centos7/whatshap-1.0/bin/whatshap"
+G2GTOOLS="/home/ahauduc/anaconda3/envs/g2gtools/bin/g2gtools"
+
+# WASP
+WASP="/home/ahauduc/software/WASP"
+
+######################################################################
+# Alignment, attempt with simple read group info
+######################################################################
+# Read in FASTQs
+for FASTQ_FOLDER in ../data/mcf10a_edit_rn1/*_L00*
+do
+    $BWA mem -M -t $THREADS \
+    -R $(echo "@RG\tID:"$(echo $FASTQ_FOLDER | awk '{print substr ($0, 25, 13)}')"\tPL:ILLUMINA") \
+    $REF \
+    $FASTQ_FOLDER/*_R1_001.fastq.gz \
+    $FASTQ_FOLDER/*_R2_001.fastq.gz \
+    2> ../output/mcf10a_edit_rn1/unmerged_alignments/$(echo $FASTQ_FOLDER | awk '{print substr ($0, 25, 13)}').sam.log | \
+$SAMTOOLS sort -@ $THREADS -O bam - -o ../output/mcf10a_edit_rn1/unmerged_alignments/$(echo $FASTQ_FOLDER | awk '{print substr ($0, 25, 13)}').bam
+$SAMTOOLS index -@ $THREADS ../output/mcf10a_edit_rn1/unmerged_alignments/$(echo $FASTQ_FOLDER | awk '{print substr ($0, 25, 13)}').bam
+echo $FASTQ_FOLDER" Done"
+done
+
+# Merge aboce files
+$SAMTOOLS merge -@ $THREADS \
+                ../output/mcf10a_edit_rn1/all_rois.bam \
+                ../output/mcf10a_edit_rn1/unmerged_alignments/*.bam
+
+# Mark dups then sort, then create bai file
+$GATK --java-options "-Xmx80G" MarkDuplicatesSpark \
+                                --spark-master local[${THREADS}] \
+                                -I ../output/mcf10a_edit_rn1/all_rois.bam \
+                                -M ../output/mcf10a_edit_rn1/all_rois.dedup_metrics_hg38.txt \
+                                -O ../output/mcf10a_edit_rn1/all_rois.dedup.bam
+
+######################################################################
+# Alignment, attempt with simple read group info
+######################################################################
+$BCFTOOLS mpileup -f $REF ../output/mcf10a_edit_rn1/all_rois.dedup.bam | \
+$BCFTOOLS call -mv --output-type z -o ../output/mcf10a_edit_rn1/all_rois.vcf.gz
+
+######################################################################
+# Clean up temp files
+######################################################################
+rm \
+../output/mcf10a_edit_rn1/unmerged_alignments/*
+../output/mcf10a_edit_rn1/all_rois.bam
+
+######################################################################
+# End message
+######################################################################
+
+echo "Done with all alignment"

@@ -1,0 +1,406 @@
+---
+title: "TFBS Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+Setup
+```{r, echo = FALSE}
+#!/gsc/software/linux-x86_64-centos7/R-4.1.0/lib64/R/bin/R
+# R 4.1.0
+# x86_64-centos7-linux-gnu
+library(tidyverse)
+library(combinat)
+library(qvalue)
+library(UpSetR)
+library(HelloRanges)
+library(plyranges)
+library(gt)
+library(genomation)
+library(lsr)
+library(VariantAnnotation)
+library(MutationalPatterns)
+library(atSNP)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(SNPlocs.Hsapiens.dbSNP151.GRCh38)
+
+const_canonical_chromosomes <- str_c("chr", c(1:22, "X", "Y"))
+```
+
+Load in data
+```{r}
+consensus.rpkm.bed.RData.files <- list.files(path = "/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/output2/spaas/annotated_rpkm", 
+                                             pattern = "*RData$", 
+                                             full.names = TRUE)
+
+consensus.all.spaas.rpkm.bed <- data.frame()
+for (i in seq_along(consensus.rpkm.bed.RData.files)) {
+  load(consensus.rpkm.bed.RData.files[i])
+  consensus.all.spaas.rpkm.bed <- bind_rows(consensus.all.spaas.rpkm.bed, consensus.spaa.rpkm.bed)
+  rm(consensus.spaa.rpkm.bed)
+}
+
+# Additional post-processing to add informative columns
+consensus.all.spaas.rpkm.bed <- consensus.all.spaas.rpkm.bed %>% 
+  rowwise() %>% 
+  mutate(RPKM_total    = sum(c_across(Individual_14_17_LP_DNA_RPKM:Individual_15_18_LC_RNA_DNA_RPKM)),
+         RPKM_variance = var(c_across(Individual_14_17_LP_DNA_RPKM:Individual_15_18_LC_RNA_DNA_RPKM))) %>% 
+  as.data.frame() %>% 
+  mutate(rs = na_if(rs, "NA"))
+
+```
+
+Loop
+```{r}
+# Load libraries
+data(encode_library)
+data(jaspar_library)
+
+
+# Load list of VCFs
+VCF_list <- read.table("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2.1/scripts/filelists/vcf/breast_normal_vcfs.tsv") %>% pull()
+
+# List of individuals
+individuals <- c("Individual_14_17_LP_DNA",
+                 "Individual_14_18_BC__356K_RNA",
+                 "Individual_11_18_BC_RNA_DNA",
+                 "Individual_22_18_BC_RNA_DNA",
+                 "Individual_24_18_BC_RNA_DNA",
+                 "Individual_38_18_LC_RNA_DNA",
+                 "Individual_30_18_LC_RNA_DNA",
+                 "Individual_15_18_LC_RNA_DNA")
+
+# Initiate lists
+motif_scores_list <- list()
+snp_info_list <- list()
+atsnp_results_list <- list()
+
+# Calculate motif scores for all - main loop
+for (i in seq_along(VCF_list)) {
+  
+  message(str_c("Making SNP table for ", individuals[i]))
+  
+  # Make SNP table for atSNP on the fly for each individual of Breast cohort
+  readVcfAsVRanges(VCF_list[i]) %>% 
+    join_overlap_intersect(consensus.all.spaas.rpkm.bed %>%
+                             filter(get(individuals[i]) == TRUE) %>%
+                             makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, starts.in.df.are.0based = TRUE)) %>% 
+    as_tibble() %>% 
+    select(seqnames, end, region_identifier, ref, alt) %>% 
+    `colnames<-`(c("chr", "snp", "snpid", "a1", "a2")) %>% 
+    drop_na() %>% 
+    write.table(str_c("./snp_files/", individuals[i]),
+                row.names = FALSE,
+                quote = FALSE)
+  
+  message(str_c("Making SNP info object for ", individuals[i]))
+  
+  # Create SNP info object
+  snp_info_list[[individuals[i]]] <- LoadSNPData(str_c("./snp_files/", individuals[i]),
+                                                 genome.lib = "BSgenome.Hsapiens.UCSC.hg38",
+                                                 half.window.size = 30,
+                                                 default.par = FALSE,
+                                                 mutation = FALSE)
+  
+  message(str_c("Calculating motif scores for ", individuals[i]))
+  
+  # Calculate motif score and add to list
+  motif_scores_list[[individuals[i]]] <- 
+    ComputeMotifScore(motif.lib = jaspar_motif,
+                      ncores = 128,
+                      snp.info = snp_info_list[[individuals[i]]])
+  
+  message(str_c("Calculating p values for ", individuals[i]))
+  
+  # Calculate p values
+  atsnp_results_list[[individuals[i]]] <- 
+    ComputePValues(motif.lib = jaspar_motif,
+                   ncores = 128,
+                   snp.info = snp_info_list[[individuals[i]]],
+                   motif.scores = motif_scores_list[[individuals[i]]]$motif.scores)
+  
+  message(str_c("Adjusting p values for ", individuals[i]))
+  
+  qval_rank <- qvalue(atsnp_results_list[[individuals[i]]]$pval_rank, pi0 = 0.1)$qvalues
+  atsnp_results_list[[individuals[i]]] <- cbind(atsnp_results_list[[individuals[i]]], qval_rank)
+  
+}
+
+# Create a master list by collapsing the elements of the list
+atsnp_results <- bind_rows(atsnp_results_list, .id = "individual") %>% relocate(individual, .before = motif)
+
+# Remove temporary files
+rm(motif_scores_list, snp_info_list, atsnp_results_list, qval_rank)
+```
+
+```{r}
+# Create a key of motif:tf_name for each database 
+jaspar_motif_key <- jaspar_motifinfo %>% as.data.frame() %>% rownames_to_column() %>% `colnames<-`(c("motif", "tf_name"))
+encode_motif_key <- encode_motifinfo %>% as.data.frame() %>% rownames_to_column() %>% `colnames<-`(c("motif", "tf_name"))
+
+# Data from Pellacani 2016 paper describing the tf_name and the celltype each is enriched in
+tf_celltype_breast_enrichment <- read.csv("./data/tf_celltype_breast_enrichment.csv") %>% filter(is_top_defining_tf == TRUE) %>% select(-is_top_defining_tf)
+
+# Creating additional columns for tf_name, the celltype the tf is enriched in (based on Pellacani 2016 data), and the cis-BTLs original celltype based off of name
+atsnp_results <- atsnp_results %>% 
+  left_join(jaspar_motif_key) %>% 
+  left_join(tf_celltype_breast_enrichment) %>% 
+  mutate(cis_BTL_celltype = case_when(snpid %>% str_detect("_BC_") ~ "BC",
+                                      snpid %>% str_detect("_LP_") ~ "LP",
+                                      snpid %>% str_detect("_LC_") ~ "LC",
+                                      snpid %>% str_detect("_SC_") ~ "SC"),
+         tf_BTL_modality_match = (celltype_tf_enriched_in == cis_BTL_celltype)) %>% 
+  relocate(tf_name, celltype_tf_enriched_in, cis_BTL_celltype, tf_BTL_modality_match, .after = motif) %>%
+  mutate(tf_BTL_modality_match_binary = case_when(tf_BTL_modality_match == TRUE ~ TRUE,
+                                                  tf_BTL_modality_match == FALSE | is.na(tf_BTL_modality_match) ~ FALSE),
+         pval_rank_is_significant = case_when(pval_rank <  0.01 ~ TRUE,
+                                                pval_rank >= 0.01 ~ FALSE),
+         .after = tf_BTL_modality_match)
+
+# See what mean tf binding affinity change is in tfs that are enriched in the celltype the cis-BTL occured in
+atsnp_results %>% filter(tf_BTL_modality_match == TRUE) %>% pull(pval_rank) %>% mean()
+
+# See what mean tf binding affinity change is in tfs that are enriched in the celltype the cis-BTL DID NOT occur in
+atsnp_results %>% filter(tf_BTL_modality_match != TRUE) %>% pull(pval_rank) %>% mean()
+
+# Testing to see if cis-regulatory-affecting variants (cis-BTLs) that occured in a given cell type (BC, LP, or LC)
+# are more likely to significantly change a TF binding site of a TF that is upregulated in that cell type vs one that isn't
+
+wilcox.test(atsnp_results %>% filter(tf_BTL_modality_match == TRUE) %>% pull(pval_rank),
+            atsnp_results %>% filter(tf_BTL_modality_match == FALSE | is.na(tf_BTL_modality_match)) %>% pull(pval_rank),
+            alternative = "less")
+
+atsnp_results_contingency_table <- atsnp_results %>%
+  group_by(tf_BTL_modality_match_binary, pval_rank_is_significant) %>% 
+  summarize(n = dplyr::n())
+
+# Fisher's exact test on contingency table
+atsnp_results_contingency_table %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>% 
+  fisher.test()
+ 
+# Chi squared test on contingency table
+atsnp_results_contingency_table %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>% 
+  chisq.test()
+
+# Test power with Cramer's V
+atsnp_results_contingency_table %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>% 
+  cramersV()
+
+# Plots of the above summarized data
+# non-binary violin
+atsnp_results %>% 
+  ggplot(aes(x = factor(tf_BTL_modality_match, levels = c("TRUE", "FALSE", "NA")), y = pval_rank)) +
+  geom_violin() +
+  labs(x = "TF and cis-hBTL cell type matches", y = "SNP impact p-value") +
+  geom_hline(yintercept = 0.01, linetype = "dashed", color = "red")
+ggsave("./plots/violin_cis_btl_tfbs_disruption_p_vals.png")
+
+# binary violin
+atsnp_results %>% 
+  ggplot(aes(x = factor(tf_BTL_modality_match_binary, levels = c("TRUE", "FALSE")), y = pval_rank)) +
+  geom_violin() +
+  labs(x = "TF and cis-hBTL cell type matches", y = "SNP impact p-value") +
+  geom_hline(yintercept = 0.01, linetype = "dashed", color = "red")
+ggsave("./plots/violin_cis_btl_tfbs_disruption_binary_p_vals.png")
+
+# binary boxplot
+atsnp_results %>% 
+  ggplot(aes(x = factor(tf_BTL_modality_match_binary, levels = c("TRUE", "FALSE")), y = pval_rank)) +
+  geom_boxplot() +
+  labs(x = "TF and cis-hBTL cell type matches", y = "SNP impact p-value") +
+  geom_hline(yintercept = 0.01, linetype = "dashed", color = "red")
+ggsave("./plots/boxplot_cis_btl_tfbs_disruption_binary_p_vals.png")
+
+```
+
+Create nice-looking contingency table for binary test
+```{r}
+atsnp_results_contingency_table %>%
+  mutate(tf_BTL_modality_match_binary = factor(tf_BTL_modality_match_binary, levels = c("TRUE", "FALSE")),
+         pval_rank_is_significant     = factor(pval_rank_is_significant, levels = c("TRUE", "FALSE"))) %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>%
+  as.data.frame.matrix() %>% 
+  rownames_to_column("TF-hBTL cell type matches") %>% 
+  gt() %>%
+  tab_options(heading.title.font.weight = "bold",
+              column_labels.font.weight =  "light") %>% 
+  tab_spanner(label = "SNP impact is significant", columns = c("TRUE", "FALSE")) %>% 
+  tab_style(style = cell_text(weight = "bold"),
+            locations = cells_body(columns = 1)) %>% 
+  cols_align(columns = everything(), align = "right")  %>% 
+  fmt_number(columns = -1, decimals = 0, use_seps = TRUE, sep_mark = ",") %>% 
+  gtsave("./plots/table_contingency_binary.png")
+
+```
+
+Test on transcription-linked SPAAs
+```{r}
+# Pull out high-tx-linked SPAA ids
+high_tx_linked_spaa_ids <- 
+  consensus.all.spaas.rpkm.bed %>% 
+  filter(t_test_p_val_fdr_adj < 0.01) %>% 
+  arrange(desc(RPKM_variance)) %>% 
+  slice(1:1000) %>% 
+  pull(region_identifier)
+
+atsnp_results_contingency_table_tx <- 
+  atsnp_results %>%
+  filter(snpid %in% high_tx_linked_spaa_ids) %>% 
+  group_by(tf_BTL_modality_match_binary, pval_rank_is_significant) %>% 
+  summarize(n = dplyr::n())
+
+# Fisher's exact test on contingency table
+atsnp_results_contingency_table_tx %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>% 
+  fisher.test()
+
+# Create nice table
+atsnp_results_contingency_table_tx %>%
+  mutate(tf_BTL_modality_match_binary = factor(tf_BTL_modality_match_binary, levels = c("TRUE", "FALSE")),
+         pval_rank_is_significant     = factor(pval_rank_is_significant, levels = c("TRUE", "FALSE"))) %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>%
+  as.data.frame.matrix() %>% 
+  rownames_to_column("TF-hBTL cell type matches") %>% 
+  gt() %>%
+  tab_options(heading.title.font.weight = "bold",
+              column_labels.font.weight =  "light") %>% 
+  tab_spanner(label = "SNP impact is significant", columns = c("TRUE", "FALSE")) %>% 
+  tab_style(style = cell_text(weight = "bold"),
+            locations = cells_body(columns = 1)) %>% 
+  cols_align(columns = everything(), align = "right")  %>% 
+  fmt_number(columns = -1, decimals = 0, use_seps = TRUE, sep_mark = ",") %>% 
+  gtsave("./plots/table_contingency_tx_binary.png")
+
+```
+
+Test by categories
+```{r}
+
+atsnp_results_contingency_table_celltype <- 
+  atsnp_results %>%
+  group_by(cis_BTL_celltype, tf_BTL_modality_match_binary, pval_rank_is_significant) %>% 
+  summarize(n = dplyr::n())
+
+atsnp_results_contingency_table_celltype %>% 
+  filter()
+
+atsnp_results_contingency_table %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>% 
+  chisq.test()
+
+```
+
+
+By-mark analysis
+```{r}
+# Initiate contigency table list
+atsnp_results_mark_contingency_tables <- list()
+
+# Loop over marks
+for (current_mark in c("H3K4me3", "H3K27ac", "H3K4me1", "H3K9me3", "H3K27me3", "H3K36me3")) {
+  
+  # Create subset based on cis-hBTL being in a certain mark
+  current_atsnp_results_subset <- atsnp_results %>% filter(str_detect(snpid, str_c("^", current_mark)))
+  
+  # Significance contingency table
+  atsnp_results_mark_contingency_tables[[current_mark]] <- current_atsnp_results_subset %>%
+    group_by(tf_BTL_modality_match_binary, pval_rank_is_significant) %>%
+    summarize(n = dplyr::n())
+  
+  # Print current mark and number of cis-hBTLs for that mark
+  print(current_mark)
+  print(nrow(current_atsnp_results_subset)/nrow(jaspar_motif_key))
+  
+  # remove temp objects
+  rm(current_atsnp_results_subset)
+}
+
+# Hypothesis testing
+# Initialize list
+atsnp_results_mark_fisher_tests <- list()
+for (current_mark in c("H3K4me3", "H3K27ac", "H3K4me1", "H3K9me3", "H3K27me3", "H3K36me3")) {
+  
+ atsnp_results_mark_fisher_tests[[current_mark]] <- atsnp_results_mark_contingency_tables[[current_mark]] %>%
+   xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>%
+   fisher.test() %>%
+   broom::tidy()
+}
+
+atsnp_results_mark_fisher_tests <- atsnp_results_mark_fisher_tests %>% bind_rows(.id = "mark")
+
+atsnp_results_mark_fisher_tests %>% write.csv("data/by_mark_fisher_tests.csv", row.names = FALSE, quote = FALSE)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- Single example test -->
+<!-- ```{r} -->
+<!-- # Load in JASPAR library and compute motif scores -->
+<!-- data(jaspar_library) -->
+
+<!-- # Read in original 14-17 VCF as a GRanges file -->
+<!-- vcf_Ind_14_17 <-  -->
+<!--   readVcfAsVRanges("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/1/output2/H3K4me3/CEMT_155/wgs/CEMT_155.recal_hard_filtered_phased_snvs.vcf.gz") -->
+
+<!-- # Pull out only the SNVs that are in 14-17 -->
+<!-- vcf_Ind_14_17_spaas <-  -->
+<!--   join_overlap_intersect(vcf_Ind_14_17, -->
+<!--                          consensus.all.spaas.rpkm.bed %>% -->
+<!--                            filter(Individual_14_17_LP_DNA == TRUE) %>% -->
+<!--                            makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, starts.in.df.are.0based = TRUE)) -->
+
+<!-- # Create atSNP-formatted text file -->
+<!-- vcf_Ind_14_17_spaas_processed <- vcf_Ind_14_17_spaas %>%  -->
+<!--   as_tibble() %>%  -->
+<!--   select(seqnames, end, region_identifier, ref, alt) %>%  -->
+<!--   `colnames<-`(c("chr", "snp", "snpid", "a1", "a2")) %>%  -->
+<!--   drop_na() -->
+
+<!-- write.table(vcf_Ind_14_17_spaas_processed, -->
+<!--             "./snp_files/vcf_Ind_14_17_spaas_snps.txt", -->
+<!--             row.names = FALSE, -->
+<!--             quote = FALSE) -->
+
+<!-- snp_info <- LoadSNPData("./snp_files/vcf_Ind_14_17_spaas_snps.txt",  -->
+<!--                         genome.lib = "BSgenome.Hsapiens.UCSC.hg38",  -->
+<!--                         half.window.size = 30,  -->
+<!--                         default.par = TRUE,  -->
+<!--                         mutation = FALSE) -->
+
+<!-- # Calculate motif score -->
+<!-- motif_scores <- ComputeMotifScore(jaspar_motif, snp_info, ncores = 128) -->
+
+
+<!-- # Figure out a way to group back those results BY LOCUS into a unified data frame and do local and global analysis of transcription factors -->
+
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+
+<!-- consensus.all.spaas.rpkm.bed %>% filter(get(individuals[2]) == TRUE) %>% head() -->
+
+
+
+
+<!-- ``` -->
+
+
+
+

@@ -1,0 +1,164 @@
+#!/bin/bash
+
+######################################################################
+# Safe Mode Parameters
+######################################################################
+set -e
+set -u
+set -o pipefail
+
+############################################################################################################################################################
+# Scripts
+############################################################################################################################################################
+MOD1="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/1_setup.R"
+MOD2="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/2_spaa_finder_8.R"
+MOD3="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/3_spaa_rpkm_linker_8_v2.R"
+MOD4="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/4_spaa_norm_read_counts_linker_8.R"
+
+############################################################################################################################################################
+# Variables - Global
+############################################################################################################################################################
+# Rscript 4.1.0 for running pipeline R scripts
+RSCRIPT="/gsc/software/linux-x86_64-centos7/R-4.1.0/lib64/R/bin/Rscript"
+
+# Output directory
+OUTPUT_DIR="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/output2"
+
+############################################################################################################################################################
+# Variables - VCFs
+############################################################################################################################################################
+VCFS="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/vcf/breast_normal_vcfs.tsv"
+
+############################################################################################################################################################
+# Variables - Peakfiles
+############################################################################################################################################################
+PEAKFILES_H3K4me3_BC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K4me3_BC.tsv"
+PEAKFILES_H3K4me3_LP="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K4me3_LP.tsv"
+PEAKFILES_H3K4me3_LC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K4me3_LC.tsv"
+PEAKFILES_H3K4me3_SC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K4me3_SC.tsv"
+
+PEAKFILES_H3K27ac_BC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K27ac_BC.tsv"
+PEAKFILES_H3K27ac_LP="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K27ac_LP.tsv"
+PEAKFILES_H3K27ac_LC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K27ac_LC.tsv"
+PEAKFILES_H3K27ac_SC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K27ac_SC.tsv"
+
+PEAKFILES_H3K4me1_BC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K4me1_BC.tsv"
+PEAKFILES_H3K4me1_LP="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K4me1_LP.tsv"
+PEAKFILES_H3K4me1_LC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K4me1_LC.tsv"
+PEAKFILES_H3K4me1_SC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K4me1_SC.tsv"
+
+PEAKFILES_H3K9me3_BC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K9me3_BC.tsv"
+PEAKFILES_H3K9me3_LP="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K9me3_LP.tsv"
+PEAKFILES_H3K9me3_LC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K9me3_LC.tsv"
+PEAKFILES_H3K9me3_SC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K9me3_SC.tsv"
+
+PEAKFILES_H3K27me3_BC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K27me3_BC.tsv"
+PEAKFILES_H3K27me3_LP="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K27me3_LP.tsv"
+PEAKFILES_H3K27me3_LC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K27me3_LC.tsv"
+PEAKFILES_H3K27me3_SC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K27me3_SC.tsv"
+
+PEAKFILES_H3K36me3_BC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K36me3_BC.tsv"
+PEAKFILES_H3K36me3_LP="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K36me3_LP.tsv"
+PEAKFILES_H3K36me3_LC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K36me3_LC.tsv"
+PEAKFILES_H3K36me3_SC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/peak/breast_normal_H3K36me3_SC.tsv"
+
+############################################################################################################################################################
+# Variables - RPKM files
+############################################################################################################################################################
+RPKM_FILES_BC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/rpkm/breast_normal_rpkms_BC.tsv"
+RPKM_FILES_LP="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/rpkm/breast_normal_rpkms_LP.tsv"
+RPKM_FILES_LC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/rpkm/breast_normal_rpkms_LC.tsv"
+RPKM_FILES_SC="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/rpkm/breast_normal_rpkms_SC.tsv"
+
+############################################################################################################################################################
+# Run scripts
+############################################################################################################################################################
+############################################################################################################################################################
+# Module 1: Setup
+############################################################################################################################################################
+# All
+# $RSCRIPT  $MOD1  $OUTPUT_DIR  $VCFS
+
+############################################################################################################################################################
+# Module 2: SPAA Finder
+############################################################################################################################################################
+# # H3K4me3
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K4me3  BC  $PEAKFILES_H3K4me3_BC
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K4me3  LP  $PEAKFILES_H3K4me3_LP
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K4me3  LC  $PEAKFILES_H3K4me3_LC
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K4me3  SC  $PEAKFILES_H3K4me3_SC
+
+# # H3K27ac
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K27ac  BC  $PEAKFILES_H3K27ac_BC
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K27ac  LP  $PEAKFILES_H3K27ac_LP
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K27ac  LC  $PEAKFILES_H3K27ac_LC
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K27ac  SC  $PEAKFILES_H3K27ac_SC
+
+# # H3K4me1
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K4me1  BC  $PEAKFILES_H3K4me1_BC
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K4me1  LP  $PEAKFILES_H3K4me1_LP
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K4me1  LC  $PEAKFILES_H3K4me1_LC
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K4me1  SC  $PEAKFILES_H3K4me1_SC
+
+# # H3K9me3
+# ### $RSCRIPT  $MOD2  $OUTPUT_DIR  H3K9me3  BC  $PEAKFILES_H3K9me3_BC # Not present
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K9me3  LP  $PEAKFILES_H3K9me3_LP
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K9me3  LC  $PEAKFILES_H3K9me3_LC
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K9me3  SC  $PEAKFILES_H3K9me3_SC
+
+# # H3K27me3
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K27me3  BC  $PEAKFILES_H3K27me3_BC
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K27me3  LP  $PEAKFILES_H3K27me3_LP
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K27me3  LC  $PEAKFILES_H3K27me3_LC
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K27me3  SC  $PEAKFILES_H3K27me3_SC
+
+# # H3K36me3
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K36me3  BC  $PEAKFILES_H3K36me3_BC
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K36me3  LP  $PEAKFILES_H3K36me3_LP
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K36me3  LC  $PEAKFILES_H3K36me3_LC
+$RSCRIPT  $MOD2  $OUTPUT_DIR  H3K36me3  SC  $PEAKFILES_H3K36me3_SC
+
+############################################################################################################################################################
+# Module 3: Transcription Linker
+############################################################################################################################################################
+# H3K4me3
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K4me3  BC  $RPKM_FILES_BC
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K4me3  LP  $RPKM_FILES_LP
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K4me3  LC  $RPKM_FILES_LC
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K4me3  SC  $RPKM_FILES_SC
+
+# H3K27ac
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K27ac  BC  $RPKM_FILES_BC
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K27ac  LP  $RPKM_FILES_LP
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K27ac  LC  $RPKM_FILES_LC
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K27ac  SC  $RPKM_FILES_SC
+
+# H3K4me1
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K4me1  BC  $RPKM_FILES_BC
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K4me1  LP  $RPKM_FILES_LP
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K4me1  LC  $RPKM_FILES_LC
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K4me1  SC  $RPKM_FILES_SC
+
+# H3K9me3
+### $RSCRIPT  $MOD3  $OUTPUT_DIR  H3K9me3  BC  $RPKM_FILES_BC # Not present
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K9me3  LP  $RPKM_FILES_LP
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K9me3  LC  $RPKM_FILES_LC
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K9me3  SC  $RPKM_FILES_SC
+
+# H3K27me3
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K27me3  BC  $RPKM_FILES_BC
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K27me3  LP  $RPKM_FILES_LP
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K27me3  LC  $RPKM_FILES_LC
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K27me3  SC  $RPKM_FILES_SC
+
+# H3K36me3
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K36me3  BC  $RPKM_FILES_BC
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K36me3  LP  $RPKM_FILES_LP
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K36me3  LC  $RPKM_FILES_LC
+$RSCRIPT  $MOD3  $OUTPUT_DIR  H3K36me3  SC  $RPKM_FILES_SC
+
+############################################################################################################################################################
+# End message
+############################################################################################################################################################
+
+echo "Done with Module 2: SPAA Analysis"

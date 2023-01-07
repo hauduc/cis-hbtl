@@ -1,0 +1,28 @@
+"0","rs75071948_freq <-"
+"0","  read_tsv(""data/rs75071948_frequency.tsv"")"
+"1","[1mRows: [22m[34m31[39m [1mColumns: [22m[34m8[39m
+"
+"1","[36m──[39m [1mColumn specification[22m [36m─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
+[1mDelimiter:[22m ""\t""
+[31mchr[39m (7): Study, Population, Group, Ref Allele, Alt Allele, BioProject ID, BioSample ID
+[32mdbl[39m (1): Samplesize
+"
+"1","
+[36mℹ[39m Use `spec()` to retrieve the full column specification for this data.
+[36mℹ[39m Specify the column types or set `show_col_types = FALSE` to quiet this message.
+"
+"0","rs75071948_freq <-"
+"0","  rs75071948_freq %>% "
+"0","  mutate(`Ref Allele` = `Ref Allele` %>% str_remove(""T="") %>% as.numeric(),"
+"0","         `Alt Allele` = `Alt Allele` %>% str_remove(""G="") %>% as.numeric())"
+"0",""
+"0","rs75071948_freq %>% "
+"0","  filter(Group == ""Study-wide"") %>% "
+"0","  mutate(Study = Study %>% factor(c(""TopMed"", ""gnomAD"", ""1000 Genomes"", ""Genetic Variation in Estonia"", ""Avon Longitudinal Study"","
+"0","                                    ""UK 10K Twins Study"", ""Korean Genome Project"", ""Genome of the Netherlands"", ""Northern Sweden"", ""Qatar Genome Programme"","
+"0","                                    ""Danish Reference Pangenome"", ""Simons Genome Diversity Project""))) %>% "
+"0","  ggplot(aes(x = Study, y = `Alt Allele`)) +"
+"0","  geom_point(aes(color = Population, size = Samplesize)) +"
+"0","  labs(x = ""Study"", y = ""rs75071948 Alt Allele Pop. Freq."", color = ""Population"", size = ""Study Size"") +"
+"0","  theme_bw() +"
+"0","  coord_flip()"

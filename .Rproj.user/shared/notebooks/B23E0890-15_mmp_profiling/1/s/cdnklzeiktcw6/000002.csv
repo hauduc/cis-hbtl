@@ -1,0 +1,8 @@
+"0","biomart_gene_info <- "
+"0","  getBM(attributes = c(""chromosome_name"", "
+"0","                       ""start_position"", "
+"0","                       ""end_position"", "
+"0","                       ""hgnc_symbol"","
+"0","                       ""ensembl_gene_id"", "
+"0","                       ""ensembl_transcript_id""),"
+"0","        mart = useEnsembl(biomart = ""genes"", dataset = ""hsapiens_gene_ensembl""))"

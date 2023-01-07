@@ -1,0 +1,164 @@
+---
+title: "Feature analysis"
+output: html_notebook
+---
+```{r}
+# R 4.1.3
+# x86_64-centos7-linux-gnu
+library(plyranges)
+library(VariantAnnotation)
+library(MutationalPatterns)
+library(genomation)
+library(Gviz)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(systemPipeR)
+library(biomaRt)
+library(LDlinkR)
+library(AllelicImbalance)
+library(broom)
+library(gt)
+library(gtsummary)
+library(UpSetR)
+library(tidyverse)
+
+const_canonical_chromosomes <- str_c("chr", c(1:22, "X", "Y"))
+
+vector_marks <- c("H3K4me3", "H3K4me1", "H3K27ac", "H3K9me3", "H3K27me3", "H3K36me3")
+vector_celltypes <- c("BC", "LP", "LC", "SC")
+vector_individuals <- c("Individual_14_17_LP_DNA",
+                        "Individual_14_18_BC__356K_RNA",
+                        "Individual_11_18_BC_RNA_DNA",
+                        "Individual_22_18_BC_RNA_DNA",
+                        "Individual_24_18_BC_RNA_DNA",
+                        "Individual_38_18_LC_RNA_DNA",
+                        "Individual_30_18_LC_RNA_DNA",
+                        "Individual_15_18_LC_RNA_DNA")
+
+
+```
+
+Load in UCSC knownGene features
+```{r}
+txdb_grlist <- genFeatures(TxDb.Hsapiens.UCSC.hg38.knownGene, featuretype = "all", reduce_ranges = FALSE, upstream = 1000, downstream = 0, verbose = TRUE)
+```
+
+Annotate if query features are present in knownGene
+Create function to use in loop
+```{r}
+# Function to pull out the fraction of query records that overlap with a knownGene feature
+get_feature_frac_overlaps <- function(query, features = txdb_grlist) {
+  query_annotated <- query
+  # Loop through types of features and annotate cis-hBTLs if they are present in that type of feature or not
+  for (feature_names in names(features)) {
+    query_annotated <- query_annotated %>% 
+      plyranges::mutate("in_knownGene_{feature_names}" := overlapsAny(query, features[[feature_names]]))
+  }
+  
+  query_annotated %>% 
+    plyranges::summarize(transcript = sum(in_knownGene_transcript) / length(query_annotated),
+                         promoter   = sum(in_knownGene_promoter)   / length(query_annotated),
+                         intron     = sum(in_knownGene_intron)     / length(query_annotated),
+                         exon       = sum(in_knownGene_exon)       / length(query_annotated),
+                         cds        = sum(in_knownGene_cds)        / length(query_annotated),
+                         fiveUTR    = sum(in_knownGene_fiveUTR)    / length(query_annotated),
+                         threeUTR   = sum(in_knownGene_threeUTR)   / length(query_annotated),
+                         intergenic = sum(in_knownGene_intergenic) / length(query_annotated)) %>%
+    as_tibble() %>%
+    t() %>%
+    as.data.frame() %>%
+    rownames_to_column() %>%
+    `colnames<-`(c("feature", "fraction_overlapping")) %>% 
+    as_tibble()
+}
+```
+
+Main loop
+```{r}
+all_overlaps <- tibble()
+for (MARK in vector_marks) {
+  for (CELLTYPE in vector_celltypes) {
+    for (INDIVIDUAL in vector_individuals) {
+      
+      MODALITY <- str_c(MARK, CELLTYPE, sep = "_")
+      
+      # Get baseline peaks overlap fraction with each feature
+      peak_frac_overlaps <- 
+        list_peak_wasp[[MODALITY]][[INDIVIDUAL]] %>% 
+        get_feature_frac_overlaps() %>% 
+        mutate(enrichment_type = "peak",
+               .before = feature)
+      
+      # Get cis-hBTLs overlap fraction with each feature
+      cis_hBTL_frac_overlaps <- 
+        consensus.all.spaas.rpkm.bed %>% 
+        plyranges::filter(mark == MARK, celltype == CELLTYPE, get(INDIVIDUAL) == TRUE) %>% 
+        get_feature_frac_overlaps() %>% 
+        mutate(enrichment_type = "cis_hBTL",
+               .before = feature)
+      
+      # Join
+      joined_overlaps <- 
+        bind_rows(peak_frac_overlaps,
+                  cis_hBTL_frac_overlaps) %>% 
+        mutate(mark = MARK,
+               celltype = CELLTYPE,
+               individual = INDIVIDUAL,
+               .before = feature)
+      
+      all_overlaps <-
+        bind_rows(all_overlaps, joined_overlaps)
+      
+    }
+  }
+}
+```
+
+Simplify data by getting the average across all individuals for each modality
+```{r}
+all_overlaps_grouped <- all_overlaps %>% 
+  group_by(enrichment_type, mark, celltype, feature) %>% 
+  summarize(fraction_overlapping_mean = mean(fraction_overlapping)) %>% 
+  ungroup() %>% 
+  # Create ordered factors for custom ordering of variables in panels of ggplot below
+  mutate(enrichment_type = enrichment_type %>% factor(c("peak", "cis_hBTL")),
+         mark = mark %>% factor(c("H3K4me3", "H3K27ac", "H3K4me1", "H3K9me3", "H3K27me3", "H3K36me3")),
+         celltype = celltype %>% factor(c("BC", "LP", "LC", "SC")),
+         feature = feature %>% factor(c("transcript", "promoter", "intron", "exon", "cds", "fiveUTR", "threeUTR", "intergenic")))
+```
+
+
+Visualize output
+```{r}
+# This chart displays the mean fraction of peaks and cis-hBTLs that overlap genomic features
+
+all_overlaps_grouped %>% 
+  ggplot(aes(x = enrichment_type, y = fraction_overlapping_mean, fill = feature)) +
+  geom_bar(position = "stack", stat = "identity") +
+  facet_grid(vars(mark), vars(celltype)) +
+  theme_bw() +
+  labs(x = element_blank(), 
+       y = element_blank())
+
+ggsave("plots/all_overlaps_with_genomic_features.png",
+       width = 10,
+       height = 7)
+```
+
+
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+

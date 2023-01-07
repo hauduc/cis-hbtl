@@ -1,0 +1,34 @@
+# job 2
+
+#!/gsc/software/linux-x86_64-centos7/R-4.1.0/lib64/R/bin/R
+# R 4.1.0
+# x86_64-centos7-linux-gnu
+library(plyranges)
+library(VariantAnnotation)
+library(MutationalPatterns)
+library(genomation)
+library(Gviz)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(systemPipeR)
+library(biomaRt)
+library(LDlinkR)
+library(AllelicImbalance)
+library(broom)
+library(gt)
+library(gtsummary)
+library(UpSetR)
+library(tidyverse)
+
+const_canonical_chromosomes <- str_c("chr", c(1:22, "X", "Y"))
+
+##############################################################################################################################################################################################
+##############################################################################################################################################################################################
+
+cl_variant_calls_test <- GRangesList()
+
+cl_variant_calls_test <- 
+  readVcf("/projects/analysis26/A24722/merge17358_bwa-mem-0.7.6a/100nt/hg38_no_alt/A24722_3_lanes_dupsFlagged.varFilter.eff.dbSNP_v146.COSMIC_v75.clinvar_20160104.annotations.vcf.gz",
+          genome = BSgenome.Hsapiens.UCSC.hg38) %>%
+  rowRanges()
+

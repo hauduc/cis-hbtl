@@ -1,0 +1,28 @@
+{
+    "id": "D9A2DE78",
+    "path": "/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/22_spaa_analysis_incl_negative_redo.Rmd",
+    "project_path": "22_spaa_analysis_incl_negative_redo.Rmd",
+    "type": "r_markdown",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1667930148631.0,
+    "source_on_save": false,
+    "relative_order": 4,
+    "properties": {
+        "tempName": "Untitled1",
+        "chunk_output_type": "inline",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "1,54",
+        "scrollLine": "0"
+    },
+    "folds": "67|6|98|0|\n",
+    "lastKnownWriteTime": 1667936070,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1667936070273,
+    "read_only": false,
+    "read_only_alternatives": []
+}

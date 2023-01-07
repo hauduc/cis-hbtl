@@ -1,0 +1,78 @@
+#!/bin/bash
+
+######################################################################
+# Safe Mode Parameters
+######################################################################
+set -e
+set -u
+set -o pipefail
+
+######################################################################
+# Set user-inputted arguments
+######################################################################
+ID=$1
+OUTPUT_DIR=$2
+THREADS=$3
+REF=$4
+ORIGINAL_OUTPUT_DIR=$5
+
+######################################################################
+# Additional resources for hg38_no_alt.fa
+######################################################################
+CHROMINFO="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/refs/chrom_info/hg38_no_alt.chromsizes.txt"
+BLACKLIST="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/blacklists/hg38-blacklist.v2.bed"
+DBSNP="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/dbSNP/all/00-All_chr.vcf.gz"
+DBSNP_SNPS="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/dbSNP/snps/00-All_chr.snps.vcf.gz"
+ALL_1KG_PHASE3_INDELS="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/callsets/1kg/ALL.wgs.1000G_phase3.GRCh38.ncbi_remapper.20150424.shapeit2_indels_fixed.vcf.gz"
+MILLS_AND_1KG_GOLD_INDELS="/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/callsets/mills_indels/resources_broad_hg38_v0_Mills_and_1000G_gold_standard.indels.hg38.vcf.gz"
+
+######################################################################
+# Set software packages employed & define dependencies
+######################################################################
+# Main tools
+SAMTOOLS="/gsc/software/linux-x86_64-centos7/samtools-1.10/bin/samtools"
+GATK="/home/ahauduc/software/gatk-4.1.4.1/gatk"
+PICARD="/gsc/software/linux-x86_64-centos7/picard-tools-2.4.1/picard.jar"
+BEDTOOLS="/gsc/software/linux-x86_64-centos7/bedtools-2.27.1/bin/bedtools"
+BEDOPS_BIN="/gsc/software/linux-x86_64-centos7/bedops-2.4.35/bin"
+BCFTOOLS="/gsc/software/linux-x86_64-centos7/bcftools-1.13/bin/bcftools"
+
+
+######################################################################
+# Make directories
+######################################################################
+if [ ! -d ${OUTPUT_DIR}/${ID} ]
+then
+        mkdir -p ${OUTPUT_DIR}/${ID}
+fi
+
+if [ ! -d ${OUTPUT_DIR}/${ID}/wgs ]
+then
+        mkdir -p ${OUTPUT_DIR}/${ID}/wgs
+fi
+
+######################################################################
+# Call variants on recalibrated reads
+######################################################################
+$GATK --java-options "-Xmx80G" HaplotypeCaller \
+                               -R $REF \
+                               --dbsnp $DBSNP \
+                               -I ${ORIGINAL_OUTPUT_DIR}/${ID}/wgs/${ID}.wgs.dedup.recal.bam \
+                               -O ${OUTPUT_DIR}/${ID}/wgs/${ID}.recal.bp_resolution.vcf.gz \
+                               -ERC BP_RESOLUTION
+
+######################################################################
+# Clean up VCF sample names and make R-friendly
+######################################################################
+for VCF in ${OUTPUT_DIR}/${ID}/wgs/*vcf.gz
+do
+    $BCFTOOLS query -l $VCF | tr " -/" "___" | awk '{ print "Individual_"$0 }' | bcftools reheader --samples - $VCF --output ${VCF}.new
+    mv ${VCF}.new $VCF
+    $BCFTOOLS index --tbi --force $VCF
+done
+
+######################################################################
+# End message
+######################################################################
+
+echo "Done with $(basename ${OUTPUT_DIR})/${ID} BP_RESOLUTION Analysis"

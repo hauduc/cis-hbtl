@@ -1,0 +1,226 @@
+---
+title: "SNP-SELEX Enrichment"
+output: html_notebook
+---
+
+```{r}
+#!/gsc/software/linux-x86_64-centos7/R-4.1.3/lib64/R/bin/R
+# R 4.1.3
+# x86_64-centos7-linux-gnu
+library(plyranges)
+library(VariantAnnotation)
+library(MutationalPatterns)
+library(genomation)
+library(Gviz)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(systemPipeR)
+library(biomaRt)
+library(LDlinkR)
+library(AllelicImbalance)
+library(broom)
+library(gt)
+library(gtsummary)
+library(UpSetR)
+library(tidyverse)
+
+const_canonical_chromosomes <- str_c("chr", c(1:22, "X", "Y"))
+
+vector_marks <- c("H3K4me3", "H3K4me1", "H3K27ac", "H3K9me3", "H3K27me3", "H3K36me3")
+vector_celltypes <- c("BC", "LP", "LC", "SC")
+vector_individuals <- c("Individual_14_17_LP_DNA",
+                        "Individual_14_18_BC__356K_RNA",
+                        "Individual_11_18_BC_RNA_DNA",
+                        "Individual_22_18_BC_RNA_DNA",
+                        "Individual_24_18_BC_RNA_DNA",
+                        "Individual_38_18_LC_RNA_DNA",
+                        "Individual_30_18_LC_RNA_DNA",
+                        "Individual_15_18_LC_RNA_DNA")
+
+```
+
+Read in data from paper
+```{r}
+# All variants
+yan_vars <- readxl::read_excel("data/41586_2021_3211_MOESM2_ESM_all_variants_tested.xlsx")
+# SNP hits that affect TF binding
+yan_pbSNPs <- readxl::read_excel("data/41586_2021_3211_MOESM4_ESM_all_pbSNPs.xlsx")
+```
+
+Count rsID enrichment of cis-hBTLs within all_vars vs. pbSNPs set
+```{r}
+# Summarize Yan tested variants that are cis-hBTLs and pbSNPs
+yan_vars <- yan_vars %>%
+  mutate(cis_hBTL = `rs number` %in% consensus.all.spaas.rpkm.bed$rs,
+         pbSNP    = `rs number` %in% yan_pbSNPs$`rs number`)
+
+# Print contingency table
+yan_vars %>% 
+  mutate(cis_hBTL = cis_hBTL %>% factor(c("TRUE", "FALSE")),
+         pbSNP    = pbSNP    %>% factor(c("TRUE", "FALSE"))) %>% 
+  tbl_cross(row = cis_hBTL,
+            col = pbSNP,
+            percent = "cell") %>% 
+  bold_labels() %>% 
+  as_gt() %>% 
+  gtsave("plots/table_contingency_all_cis_hBTL_pbSNP_enrichment.png")
+
+# Test if cis-hBTLs are more likely to be pbSNPs than would be expected by chance
+yan_vars %>% 
+  group_by(cis_hBTL, pbSNP) %>%
+  summarize(n = n()) %>% 
+  xtabs(n ~ cis_hBTL + pbSNP, data = .) %>% 
+  fisher.test()
+```
+
+In the cis-hBTLs that are pbSNPs, do those tend to disrupt within-cell-type TFs?
+```{r}
+# Label Yan pbSNPs by cell type within disrupted TF is enriched
+yan_pbSNPs <- yan_pbSNPs %>% 
+  mutate(`Cell type TF enriched in` = case_when(`TF affected` %>% str_detect("(p63|p53|TEAD4|TEAD2)")                 ~ "BC",
+                                                `TF affected` %>% str_detect("(EHF|ELF5|ELF1|GRHL2|SPDEF)")           ~ "LP",
+                                                `TF affected` %>% str_detect("(?!JUND)(FOXA1|FOXA2|JUN|FOXP1|BACH2)") ~ "LC")) # Add a negative look-around to exclude JUND-only rows
+
+# No BC test because none of the BC-upregulated TFs were tested in Yan et al.
+
+# LP
+yan_vars <- yan_vars %>%
+  mutate(LP_cis_hBTL = `rs number` %in% plyranges::filter(consensus.all.spaas.rpkm.bed, celltype == "LP")$rs,
+         LP_pbSNP    = `rs number` %in% filter(yan_pbSNPs, `Cell type TF enriched in` == "LP")$`rs number`)
+
+
+# Conclusion: LP cis-hBTLs are significantly more likely to be pbSNPs that disrupt LP-linked TFs than not
+yan_vars %>% 
+  group_by(LP_cis_hBTL, LP_pbSNP) %>%
+  summarize(n = n()) %>% 
+  xtabs(n ~ LP_cis_hBTL + LP_pbSNP, data = .) %>% 
+  fisher.test()
+
+# Print contingency table
+yan_vars %>% 
+  mutate(LP_cis_hBTL = LP_cis_hBTL %>% factor(c("TRUE", "FALSE")),
+         LP_pbSNP    = LP_pbSNP    %>% factor(c("TRUE", "FALSE"))) %>% 
+  tbl_cross(row = LP_cis_hBTL,
+            col = LP_pbSNP,
+            percent = "cell") %>% 
+  bold_labels() %>% 
+  as_gt() %>% 
+  gtsave("plots/table_contingency_LP_cis_hBTL_pbSNP_enrichment.png")
+
+
+# LC
+yan_vars <- yan_vars %>%
+  mutate(LC_cis_hBTL = `rs number` %in% plyranges::filter(consensus.all.spaas.rpkm.bed, celltype == "LC")$rs,
+         LC_pbSNP    = `rs number` %in% filter(yan_pbSNPs, `Cell type TF enriched in` == "LC")$`rs number`)
+
+# Print contingency table
+yan_vars %>% 
+  mutate(LC_cis_hBTL = LC_cis_hBTL %>% factor(c("TRUE", "FALSE")),
+         LC_pbSNP    = LC_pbSNP    %>% factor(c("TRUE", "FALSE"))) %>% 
+  tbl_cross(row = LC_cis_hBTL,
+            col = LC_pbSNP,
+            percent = "cell") %>% 
+  bold_labels() %>% 
+  as_gt() %>% 
+  gtsave("plots/table_contingency_LC_cis_hBTL_pbSNP_enrichment.png")
+
+# Same as above, but trends rather than being significant
+yan_vars %>% 
+  group_by(LC_cis_hBTL, LC_pbSNP) %>%
+  summarize(n = n()) %>% 
+  xtabs(n ~ LC_cis_hBTL + LC_pbSNP, data = .) %>% 
+  fisher.test()
+
+```
+
+Pull out SNP-SELEX-cis-hBTL hits and check for transcriptional changes
+```{r}
+# Instantiate
+yan_pbSNP_cis_hBTL_rsIDs <- list()
+
+# LP
+yan_pbSNP_cis_hBTL_rsIDs$LP <- yan_vars %>% 
+  filter(LP_cis_hBTL == TRUE,
+         LP_pbSNP    == TRUE) %>% 
+  pull(`rs number`)
+
+consensus.all.spaas.rpkm.bed %>% 
+  as.data.frame() %>% 
+  filter(rs %in% yan_pbSNP_cis_hBTL_rsIDs$LP)
+
+# LC
+yan_pbSNP_cis_hBTL_rsIDs$LC <- yan_vars %>% 
+  filter(LC_cis_hBTL == TRUE,
+         LC_pbSNP    == TRUE) %>% 
+  pull(`rs number`)
+
+consensus.all.spaas.rpkm.bed %>% 
+  as.data.frame() %>% 
+  filter(rs %in% yan_pbSNP_cis_hBTL_rsIDs$LC)
+
+# Conclusion:
+# None of the hits are linked to transcriptional changes
+
+```
+
+Check SNP-SELEX-cis-hBTL unique hits for what TFs they disrupt
+```{r}
+# Create table with pbSNP AND cis-hBTL information for top hits
+yan_pbSNPs %>% 
+  filter(`rs number` %in% yan_pbSNP_cis_hBTL_rsIDs$LP |
+         `rs number` %in% yan_pbSNP_cis_hBTL_rsIDs$LC) %>% 
+  left_join(consensus.all.spaas.rpkm.bed %>% 
+              as.data.frame() %>% 
+              select(rs, mark, celltype) %>% 
+              filter(rs %in% yan_pbSNP_cis_hBTL_rsIDs$LC | rs %in% yan_pbSNP_cis_hBTL_rsIDs$LP) %>% 
+              group_by(rs) %>% 
+              summarize(`Cis-hBTL mark`      = toString(mark),
+                        `Cis-hBTL cell type` = toString(celltype)) %>% 
+              mutate(`Cis-hBTL mark`      = `Cis-hBTL mark`      %>% str_replace(", ", ","),
+                     `Cis-hBTL cell type` = `Cis-hBTL cell type` %>% str_replace(", ", ",")),
+            by = c("rs number" = "rs")) %>% 
+  gt() %>%
+  tab_options(heading.title.font.weight = "bold",
+              column_labels.font.weight =  "light") %>% 
+  gtsave("plots/table_yan_pbSNP_cell_type_specific_top_hits.png")
+
+# Print table
+yan_pbSNPs %>% 
+  filter(`rs number` %in% yan_pbSNP_cis_hBTL_rsIDs$LP |
+         `rs number` %in% yan_pbSNP_cis_hBTL_rsIDs$LC) %>% 
+  gt() %>%
+  tab_options(heading.title.font.weight = "bold",
+              column_labels.font.weight =  "light") %>% 
+  gtsave("plots/table_yan_pbSNP_cell_type_specific_top_hits.png")
+
+# Pull out rsIDs for enrichment analysis
+yan_pbSNPs %>% 
+  filter(`rs number` %in% yan_pbSNP_cis_hBTL_rsIDs$LP |
+         `rs number` %in% yan_pbSNP_cis_hBTL_rsIDs$LC) %>% 
+  pull(`rs number`) %>% 
+  write.table("data/yan_pbSNP_cell_type_specific_top_hits.tsv",
+              sep = "\t",
+              quote = FALSE,
+              row.names = FALSE,
+              col.names = FALSE)
+```
+
+All pbSNP and cis-hBTL ref/alt alleles are the same for intersecting pbSNP+cis-hBTLs
+```{r}
+current_cis_hBTL_pbSNP_ranges_alleles <- GRanges()
+for (i in 1:nrow(read.table("data/yan_pbSNP_cell_type_specific_top_hits.tsv"))) {
+  
+  current_cis_hBTL_pbSNP_ranges <- list_variant_calls %>% 
+    as_granges %>% 
+    join_overlap_intersect(consensus.all.spaas.rpkm.bed %>% plyranges::filter(rs == read.table("data/yan_pbSNP_cell_type_specific_top_hits.tsv")[i, ]))
+  
+  current_cis_hBTL_pbSNP_ranges_alleles <- c(current_cis_hBTL_pbSNP_ranges_alleles, current_cis_hBTL_pbSNP_ranges)
+  
+}
+
+current_cis_hBTL_pbSNP_ranges_alleles %>% 
+  plyranges::select(ref, alt) %>% 
+  as.data.frame() %>% 
+  distinct()
+```
+

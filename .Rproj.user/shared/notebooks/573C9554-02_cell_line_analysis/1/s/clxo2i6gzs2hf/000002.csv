@@ -1,0 +1,6 @@
+"0","# Merge the top hits"
+"0","top_hits_merged <-"
+"0","  bind_ranges(as.list(list_variant_calls_top_hits),"
+"0","              as.list(cl_variant_calls_top_hits)) %>%"
+"0","  as.data.frame() %>% "
+"0","  select(seqnames, start, end, ref, alt, rs, sampleNames, region_identifier, celltype, mark)"

@@ -1,0 +1,202 @@
+---
+title: "TFBS Analysis T20"
+output:
+  html_document:
+    df_print: paged
+---
+Setup
+```{r, echo = FALSE}
+#!/gsc/software/linux-x86_64-centos7/R-4.1.0/lib64/R/bin/R
+# R 4.1.0
+# x86_64-centos7-linux-gnu
+library(combinat)
+library(qvalue)
+library(UpSetR)
+library(HelloRanges)
+library(plyranges)
+library(gt)
+library(genomation)
+library(lsr)
+library(VariantAnnotation)
+library(MutationalPatterns)
+library(atSNP)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(SNPlocs.Hsapiens.dbSNP151.GRCh38)
+library(tidyverse)
+```
+
+Load in data from previous T5 analysis
+```{r}
+load("atSNP_results_1.RData")
+```
+
+Analysis
+```{r}
+# Create a key of motif:tf_name for each database 
+jaspar_motif_key <- jaspar_motifinfo %>% as.data.frame() %>% rownames_to_column() %>% `colnames<-`(c("motif", "tf_name"))
+encode_motif_key <- encode_motifinfo %>% as.data.frame() %>% rownames_to_column() %>% `colnames<-`(c("motif", "tf_name"))
+
+# Data from Pellacani 2016 paper describing the tf_name and the celltype each is enriched in
+tf_celltype_breast_enrichment_t20 <- read.csv("data/tf_celltype_enrichment_v2_t20_formatted.csv") %>% 
+  select(-paper_name, -present_in_jaspar)
+
+# Create new results object for T20
+atsnp_results_t20 <- atsnp_results
+
+# Strip off old T5 analysis columns
+atsnp_results_t20 <- atsnp_results_t20 %>% 
+  select(-tf_name, -celltype_tf_enriched_in, -cis_BTL_celltype, -tf_BTL_modality_match, -tf_BTL_modality_match_binary, -pval_rank_is_significant)
+
+
+# Creating additional columns for tf_name, the celltype the tf is enriched in (based on Pellacani 2016 data), and the cis-BTLs original celltype based off of name
+atsnp_results_t20 <- atsnp_results_t20 %>% 
+  left_join(jaspar_motif_key) %>% 
+  left_join(tf_celltype_breast_enrichment_t20) %>% 
+  mutate(cis_BTL_celltype = case_when(snpid %>% str_detect("_BC_") ~ "BC",
+                                      snpid %>% str_detect("_LP_") ~ "LP",
+                                      snpid %>% str_detect("_LC_") ~ "LC",
+                                      snpid %>% str_detect("_SC_") ~ "SC"),
+         tf_BTL_modality_match = (celltype_tf_enriched_in == cis_BTL_celltype)) %>% 
+  relocate(tf_name, celltype_tf_enriched_in, cis_BTL_celltype, tf_BTL_modality_match, .after = motif) %>%
+  mutate(tf_BTL_modality_match_binary = case_when(tf_BTL_modality_match == TRUE ~ TRUE,
+                                                  tf_BTL_modality_match == FALSE | is.na(tf_BTL_modality_match) ~ FALSE),
+         pval_rank_is_significant = case_when(pval_rank <  0.01 ~ TRUE,
+                                                pval_rank >= 0.01 ~ FALSE),
+         .after = tf_BTL_modality_match)
+
+# See what mean tf binding affinity change is in tfs that are enriched in the celltype the cis-BTL occured in
+atsnp_results_t20 %>% filter(tf_BTL_modality_match == TRUE) %>% pull(pval_rank) %>% mean()
+
+# See what mean tf binding affinity change is in tfs that are enriched in the celltype the cis-BTL DID NOT occur in
+atsnp_results_t20 %>% filter(tf_BTL_modality_match != TRUE) %>% pull(pval_rank) %>% mean()
+
+# Testing to see if cis-regulatory-affecting variants (cis-BTLs) that occured in a given cell type (BC, LP, or LC)
+# are more likely to significantly change a TF binding site of a TF that is upregulated in that cell type vs one that isn't
+
+wilcox.test(atsnp_results_t20 %>% filter(tf_BTL_modality_match == TRUE) %>% pull(pval_rank),
+            atsnp_results_t20 %>% filter(tf_BTL_modality_match == FALSE | is.na(tf_BTL_modality_match)) %>% pull(pval_rank),
+            alternative = "less")
+
+atsnp_results_contingency_table_t20 <- atsnp_results_t20 %>%
+  group_by(tf_BTL_modality_match_binary, pval_rank_is_significant) %>% 
+  summarize(n = n())
+
+# Fisher's exact test on contingency table
+atsnp_results_contingency_table_t20 %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>% 
+  fisher.test()
+
+# Chi squared test on contingency table
+atsnp_results_contingency_table_t20 %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>% 
+  chisq.test()
+
+# Test power with Cramer's V
+atsnp_results_contingency_table_t20 %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>% 
+  cramersV()
+
+# Plots of the above summarized data
+# non-binary violin
+atsnp_results_t20 %>% 
+  ggplot(aes(x = factor(tf_BTL_modality_match, levels = c("TRUE", "FALSE", "NA")), y = pval_rank)) +
+  geom_violin() +
+  labs(x = "TF and cis-hBTL cell type matches", y = "SNP impact p-value") +
+  geom_hline(yintercept = 0.01, linetype = "dashed", color = "red")
+ggsave("plots_t20/violin_cis_btl_tfbs_disruption_p_vals.png")
+
+# binary violin
+atsnp_results_t20 %>% 
+  ggplot(aes(x = factor(tf_BTL_modality_match_binary, levels = c("TRUE", "FALSE")), y = pval_rank)) +
+  geom_violin() +
+  labs(x = "TF and cis-hBTL cell type matches", y = "SNP impact p-value") +
+  geom_hline(yintercept = 0.01, linetype = "dashed", color = "red")
+ggsave("plots_t20/violin_cis_btl_tfbs_disruption_binary_p_vals.png")
+
+# binary boxplot
+atsnp_results_t20 %>% 
+  ggplot(aes(x = factor(tf_BTL_modality_match_binary, levels = c("TRUE", "FALSE")), y = pval_rank)) +
+  geom_boxplot() +
+  labs(x = "TF and cis-hBTL cell type matches", y = "SNP impact p-value") +
+  geom_hline(yintercept = 0.01, linetype = "dashed", color = "red")
+ggsave("plots_t20/boxplot_cis_btl_tfbs_disruption_binary_p_vals.png")
+
+```
+
+Create nice-looking contingency table for binary test
+```{r}
+atsnp_results_contingency_table_t20 %>%
+  mutate(tf_BTL_modality_match_binary = factor(tf_BTL_modality_match_binary, levels = c("TRUE", "FALSE")),
+         pval_rank_is_significant     = factor(pval_rank_is_significant, levels = c("TRUE", "FALSE"))) %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>%
+  as.data.frame.matrix() %>% 
+  rownames_to_column("TF-hBTL cell type matches") %>% 
+  gt() %>%
+  tab_options(heading.title.font.weight = "bold",
+              column_labels.font.weight =  "light") %>% 
+  tab_spanner(label = "SNP impact is significant", columns = c("TRUE", "FALSE")) %>% 
+  tab_style(style = cell_text(weight = "bold"),
+            locations = cells_body(columns = 1)) %>% 
+  cols_align(columns = everything(), align = "right")  %>% 
+  fmt_number(columns = -1, decimals = 0, use_seps = TRUE, sep_mark = ",") %>% 
+  gtsave("plots_t20/table_contingency_binary.png")
+
+```
+
+Test on transcription-linked SPAAs
+```{r}
+# Pull out high-tx-linked SPAA ids
+high_tx_linked_spaa_ids <- 
+  consensus.all.spaas.rpkm.bed %>% 
+  filter(t_test_p_val_fdr_adj < 0.01) %>% 
+  arrange(desc(RPKM_variance)) %>% 
+  slice(1:1000) %>% 
+  pull(region_identifier)
+
+atsnp_results_contingency_table_t20_tx <- 
+  atsnp_results_t20 %>%
+  filter(snpid %in% high_tx_linked_spaa_ids) %>% 
+  group_by(tf_BTL_modality_match_binary, pval_rank_is_significant) %>% 
+  summarize(n = n())
+
+# Fisher's exact test on contingency table
+atsnp_results_contingency_table_t20_tx %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>% 
+  fisher.test()
+
+# Create nice table
+atsnp_results_contingency_table_t20_tx %>%
+  mutate(tf_BTL_modality_match_binary = factor(tf_BTL_modality_match_binary, levels = c("TRUE", "FALSE")),
+         pval_rank_is_significant     = factor(pval_rank_is_significant, levels = c("TRUE", "FALSE"))) %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>%
+  as.data.frame.matrix() %>% 
+  rownames_to_column("TF-hBTL cell type matches") %>% 
+  gt() %>%
+  tab_options(heading.title.font.weight = "bold",
+              column_labels.font.weight =  "light") %>% 
+  tab_spanner(label = "SNP impact is significant", columns = c("TRUE", "FALSE")) %>% 
+  tab_style(style = cell_text(weight = "bold"),
+            locations = cells_body(columns = 1)) %>% 
+  cols_align(columns = everything(), align = "right")  %>% 
+  fmt_number(columns = -1, decimals = 0, use_seps = TRUE, sep_mark = ",") %>% 
+  gtsave("plots_t20/table_contingency_tx_binary.png")
+
+```
+
+Test by categories
+```{r}
+
+atsnp_results_contingency_table_t20_celltype <- 
+  atsnp_results_t20 %>%
+  group_by(cis_BTL_celltype, tf_BTL_modality_match_binary, pval_rank_is_significant) %>% 
+  summarize(n = n())
+
+atsnp_results_contingency_table_t20_celltype %>% 
+  filter()
+
+atsnp_results_contingency_table_t20 %>% 
+  xtabs(n ~ tf_BTL_modality_match_binary + pval_rank_is_significant, data = .) %>% 
+  chisq.test()
+
+```
+

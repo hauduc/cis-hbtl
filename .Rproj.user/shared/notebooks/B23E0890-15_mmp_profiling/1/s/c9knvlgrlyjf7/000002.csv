@@ -1,0 +1,6 @@
+"0","biomart_gene_info_mmp <-"
+"0","  biomart_gene_info %>% "
+"0","  plyranges::filter(str_detect(hgnc_symbol, ""^MMP"")) %>% "
+"0","  as_tibble() %>% "
+"0","  select(-ensembl_transcript_id)"
+"0","  "

@@ -1,0 +1,97 @@
+#!/gsc/software/linux-x86_64-centos7/R-4.1.0/lib64/R/bin/R
+# R 4.1.0
+# x86_64-centos7-linux-gnu
+library(tidyverse)
+# Setting the right environmental variables to bedr required binaries
+PATH_default <- Sys.getenv("PATH")
+PATH_to_bedr_tools <- str_c("/gsc/software/linux-x86_64-centos7/bedtools-2.27.1/bin",
+                            "/gsc/software/linux-x86_64-centos7/bedops-2.4.35/bin",
+                            "/home/ahauduc/anaconda3/bin",
+                            sep = ":")
+Sys.setenv("PATH" = str_c(PATH_default, 
+                          PATH_to_bedr_tools, 
+                          sep = ":"))
+library(bedr)
+library(HelloRanges)
+library(plyranges)
+library(UpSetR)
+library(gt)
+library(genomation)
+library(combinat)
+
+
+consensus.rpkm.bed.RData.files <- list.files(path = "/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/output2/spaas/annotated_rpkm", 
+                                             pattern = "*RData$", 
+                                             full.names = TRUE)
+
+consensus.all.spaas.rpkm.bed <- data.frame()
+for (i in seq_along(consensus.rpkm.bed.RData.files)) {
+  load(consensus.rpkm.bed.RData.files[i])
+  consensus.all.spaas.rpkm.bed <- bind_rows(consensus.all.spaas.rpkm.bed, consensus.spaa.rpkm.bed)
+  rm(consensus.spaa.rpkm.bed)
+}
+
+# Additional post-processing to add informative columns
+consensus.all.spaas.rpkm.bed <- consensus.all.spaas.rpkm.bed %>% 
+  rowwise() %>% 
+  mutate(RPKM_total    = sum(c_across(Individual_14_17_LP_DNA_RPKM:Individual_15_18_LC_RNA_DNA_RPKM)),
+         RPKM_variance = var(c_across(Individual_14_17_LP_DNA_RPKM:Individual_15_18_LC_RNA_DNA_RPKM))) %>% 
+  as.data.frame()
+
+######################################
+consensus.all.spaas.rpkm.bed %>% 
+  as_tibble() %>% 
+  filter(t_test_p_val_fdr_adj < 0.01) %>% 
+  arrange(desc(RPKM_variance)) %>% 
+  select(chr, start, end, region_identifier, mark, celltype, rs, spaa, individuals_involved, t_test_p_val_fdr_adj, RPKM_variance) %>% 
+  view()
+
+
+consensus.all.spaas.rpkm.bed %>% 
+  group_by(spaa) %>% 
+  summarize(number_of_spaas = n()) %>% 
+  mutate(`Cis-hBTL Type` = if_else(spaa == TRUE, "alt_allele_driven", "ref_allele_driven")) %>% 
+  ggplot(aes(x = "", y = number_of_spaas, fill = `Cis-hBTL Type`)) +
+  geom_bar(width = 1, stat = "identity") + 
+  coord_polar("y", start = 0) +
+  labs(x = "", y = "")
+
+
+consensus.all.spaas.rpkm.bed %>% 
+  filter(t_test_p_val_fdr_adj < 0.01) %>% 
+  group_by(spaa) %>% 
+  summarize(number_of_spaas = n()) %>% 
+  mutate(`Cis-hBTL Type` = if_else(spaa == TRUE, "alt_allele_driven", "ref_allele_driven")) %>% 
+  ggplot(aes(x = "", y = number_of_spaas, fill = `Cis-hBTL Type`)) +
+  geom_bar(width = 1, stat = "identity") + 
+  coord_polar("y", start = 0) +
+  labs(x = "", y = "")
+
+
+###
+
+
+
+
+####
+
+consensus.all.spaas.rpkm.bed %>% 
+  group_by(individuals_involved, spaa) %>% 
+  summarize(number_of_spaas = n()) %>% 
+  mutate(`Cis-hBTL Type` = if_else(spaa == TRUE, "alt_allele_driven", "ref_allele_driven")) %>% 
+  ggplot(aes(x = as.factor(individuals_involved), y = number_of_spaas, fill = `Cis-hBTL Type`)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  labs(x = "Number of Individuals Involved", y = "Number of cis-hBTLs")
+
+consensus.all.spaas.rpkm.bed %>% 
+  filter(t_test_p_val_fdr_adj < 0.01) %>% 
+  group_by(individuals_involved, spaa) %>% 
+  summarize(number_of_spaas = n()) %>% 
+  mutate(`Cis-hBTL Type` = if_else(spaa == TRUE, "alt_allele_driven", "ref_allele_driven")) %>% 
+  ggplot(aes(x = as.factor(individuals_involved), y = number_of_spaas, fill = `Cis-hBTL Type`)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  labs(x = "Number of Individuals Involved", y = "Number of cis-hBTLs")
+
+
+
+

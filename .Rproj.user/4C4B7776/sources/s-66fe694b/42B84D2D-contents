@@ -1,0 +1,161 @@
+---
+title: "Methylation Analysis"
+output: html_notebook
+---
+```{r}
+#!/gsc/software/linux-x86_64-centos7/R-4.1.3/lib64/R/bin/R
+# R 4.1.3
+# x86_64-centos7-linux-gnu
+library(plyranges)
+library(VariantAnnotation)
+library(MutationalPatterns)
+library(genomation)
+library(Gviz)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(systemPipeR)
+library(biomaRt)
+library(LDlinkR)
+library(AllelicImbalance)
+library(broom)
+library(gt)
+library(gtsummary)
+library(UpSetR)
+library(tidyverse)
+library(DMRcaller)
+
+
+const_canonical_chromosomes <- str_c("chr", c(1:22, "X"))
+
+vector_marks <- c("H3K4me3", "H3K4me1", "H3K27ac", "H3K9me3", "H3K27me3", "H3K36me3")
+vector_celltypes <- c("BC", "LP", "LC", "SC")
+vector_individuals <- c("Individual_14_17_LP_DNA",
+                        "Individual_14_18_BC__356K_RNA",
+                        "Individual_11_18_BC_RNA_DNA",
+                        "Individual_22_18_BC_RNA_DNA",
+                        "Individual_24_18_BC_RNA_DNA",
+                        "Individual_38_18_LC_RNA_DNA",
+                        "Individual_30_18_LC_RNA_DNA",
+                        "Individual_15_18_LC_RNA_DNA")
+
+
+```
+
+Get annotations linking gene name to txid through biomart
+```{r}
+biomart_gene_info_top_hits <- 
+  getBM(attributes = c("chromosome_name", 
+                       "start_position", 
+                       "end_position", 
+                       "hgnc_symbol",
+                       "ensembl_gene_id", 
+                       "ensembl_transcript_id"),
+        filters = "ensembl_gene_id",
+        values = unique(top_hits_ranges$ensg_nearest_downstream),
+        mart = useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl"))
+
+biomart_gene_info_top_hits <- 
+  biomart_gene_info_top_hits %>% 
+  `colnames<-`(c("seqnames", "start", "end", "hgnc_symbol", "ensembl_gene_id", "ensembl_transcript_id")) %>% 
+  mutate(seqnames = str_c("chr", seqnames)) %>% 
+  makeGRangesFromDataFrame(keep.extra.columns = TRUE, 
+                           ignore.strand = TRUE, 
+                           starts.in.df.are.0based = TRUE,
+                           seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38))
+```
+
+Get promoter ranges for your txids, starting with ANXA1
+```{r}
+promoter_ranges_annotated <- 
+  promoters(TxDb.Hsapiens.UCSC.hg38.knownGene) %>% 
+  plyranges::filter(str_detect(tx_name, str_c(biomart_gene_info_top_hits$ensembl_transcript_id, collapse = "|"))) %>% 
+  join_overlap_left(biomart_gene_info_top_hits)
+
+promoter_ranges_annotated_ANXA1 <- 
+  promoter_ranges_annotated %>% 
+  plyranges::filter(hgnc_symbol == "ANXA1") %>% 
+  reduce_ranges()
+
+```
+
+Get comparable methylation values
+```{r}
+# Test methylation file
+test_methyl <- readGeneric("/projects/edcc_new/production/bisulfite/E00609/1.0.3/3.5.0/hg38_no_alt/150/1300/extract/E00609_8_lane_gembs_cpg.txt.gz",
+                           header = TRUE,
+                           zero.based = TRUE,
+                           keep.all.metadata = TRUE)
+
+# Initialize methylation files list and read in LCs for ANXA1 comparison
+list_methylation_bedfiles <- list()
+list_methylation_bedfiles$LC <- c("/projects/edcc_new/production/bisulfite/E00611/1.0.4/3.5.0/hg38_no_alt/150/459/extract/E00611_8_lane_gembs_cpg.txt.gz",
+                                  "/projects/cemt/gembs/B19819/extract/B19819_cpg.txt.gz",
+                                  "/projects/cemt/gembs/A95337/extract/A95337_cpg.txt.gz",
+                                  "/projects/cemt/gembs/A95341/extract/A95341_cpg.txt.gz",
+                                  "/projects/cemt/gembs/B33201/extract/B33201_cpg.txt.gz",
+                                  "/projects/edcc_new/production/bisulfite/E01213/1.0.4/3.5.0/hg38_no_alt/150/535/extract/E01213_16_lane_gembs_cpg.txt.gz",
+                                  "/projects/edcc_new/production/bisulfite/E01217/1.0.4/3.5.0/hg38_no_alt/150/539/extract/E01217_16_lane_gembs_cpg.txt.gz")
+
+# Initialize working rectangular dataframe of beta value comparisons
+methylation_beta_vals_LC_ANXA1 <- promoter_ranges_annotated_ANXA1
+
+# Create ranges that are the union of all CpG beta values in cohort
+for (bedfile in list_methylation_bedfiles$LC) {
+  current_ranges <- 
+    readGeneric(bedfile,
+                header = TRUE,
+                zero.based = TRUE,
+                keep.all.metadata = TRUE) %>% 
+    plyranges::select(4)
+  
+  methylation_beta_vals_LC_ANXA1 <- join_overlap_intersect(methylation_beta_vals_LC_ANXA1, current_ranges)
+  
+}
+
+# Pivot metadata columns to long format
+
+# Plot comparisons between Individual 7 vs. all other individuals, showing points with beta values of Others as y and Individual 7 as x
+methylation_beta_vals_LC_ANXA1 <- 
+  methylation_beta_vals_LC_ANXA1 %>% 
+  mcols() %>% 
+  as_tibble()
+
+methylation_beta_vals_LC_ANXA1 %>% 
+  ggplot() +
+  geom_point(aes(y = methylation_beta_vals_LC_ANXA1[[6]],
+                 x = methylation_beta_vals_LC_ANXA1[[1]])) +
+  geom_point(aes(y = methylation_beta_vals_LC_ANXA1[[6]],
+                 x = methylation_beta_vals_LC_ANXA1[[2]])) +
+  geom_point(aes(y = methylation_beta_vals_LC_ANXA1[[6]],
+                 x = methylation_beta_vals_LC_ANXA1[[3]])) +
+  geom_point(aes(y = methylation_beta_vals_LC_ANXA1[[6]],
+                 x = methylation_beta_vals_LC_ANXA1[[4]])) +
+  geom_point(aes(y = methylation_beta_vals_LC_ANXA1[[6]],
+                 x = methylation_beta_vals_LC_ANXA1[[5]])) +
+  geom_point(aes(y = methylation_beta_vals_LC_ANXA1[[6]],
+                 x = methylation_beta_vals_LC_ANXA1[[7]])) +
+  geom_abline(slope = 1,
+              intercept = 0) +
+  xlim(0, 1) +
+  ylim(0, 1) + 
+  coord_fixed(ratio = 1/1) +
+  labs(y = "Beta values at ANXA1 promoter for Individual 7",
+       x = "Beta values at ANXA1 promoter for All Other Individuals")
+ggsave("plots/correlation_beta_vals_ANXA1_LC.png")
+
+methylation_beta_vals_LC_ANXA1 %>% 
+  mutate(cpg_index = str_c("cpg_", rownames(.)), .before = 1) %>% 
+  pivot_longer(cols = -cpg_index, 
+               names_to = "individual",
+               values_to = "beta_val")
+
+methylation_beta_vals_LC_ANXA1 %>% 
+  mutate(other_means = rowMeans(select(methylation_beta_vals_LC_ANXA1, -6)),
+         individual7_over_other_log2_ratio = log2(E01213_16_lane_gembs.Meth / other_means)) %>% 
+  ggplot(aes(individual7_over_other_log2_ratio)) + 
+  geom_histogram()
+ggsave("plots/histogram_beta_vals_ANXA1_LC.png")
+
+cor(methylation_beta_vals_LC_ANXA1[[7]], methylation_beta_vals_LC_ANXA1[[6]])
+
+```

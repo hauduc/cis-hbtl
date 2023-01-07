@@ -1,0 +1,25 @@
+#!/bin/bash
+
+cp /projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/1/output/H3K4me3/CEMT_{155,173,174,175,176,177,181,185,192,196,200}/wgs/*recal_hard_filtered_phased_snvs.vcf.gz{,.tbi} .
+
+# Annotate core VCFs and search for BRCA cancer rsIDs within them, creating new VCFs
+for CEMT_VCF in ./*recal_hard_filtered_phased_snvs.vcf.gz; do
+bcftools annotate $CEMT_VCF \
+                  --annotations /projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/00-All_chr.vcf.gz \
+                  --columns ID \
+                  --threads 64 \
+                  --output-type z \
+                  --output ${CEMT_VCF}.rsID_annotated.vcf.gz
+bcftools index --tbi ${CEMT_VCF}.rsID_annotated.vcf.gz
+bcftools view ${CEMT_VCF}.rsID_annotated.vcf.gz \
+              --include 'ID=@BRCA_rsIDs.txt' \
+              --threads 64 \
+              --output-type z \
+              --output ${CEMT_VCF}.BRCA.hits.vcf.gz
+done
+
+# Prepare for R script
+zcat ./*BRCA.hits* | grep -v "^#" | sort > ./total.BRCA.hits.tsv
+
+# Remove local copy of core VCFs
+rm ./*recal_hard_filtered_phased_snvs.vcf.gz{,.tbi}

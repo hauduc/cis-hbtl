@@ -1,0 +1,32 @@
+Study	Population	Group	Samplesize	Ref Allele	Alt Allele	BioProject ID	BioSample ID
+TopMed	Global	Study-wide	264690	T=0.977238	G=0.022762	PRJNA400167	
+gnomAD	Global	Study-wide	140084	T=0.978770	G=0.021230	PRJNA398795	SAMN07488253
+gnomAD	European	Sub	75874	T=0.97058	G=0.02942		SAMN10181265
+gnomAD	African	Sub	41970	T=0.99395	G=0.00605		SAMN07488254
+gnomAD	American	Sub	13642	T=0.97654	G=0.02346		SAMN07488255
+gnomAD	Ashkenazi Jewish	Sub	3322	T=0.9672	G=0.0328		SAMN07488252
+gnomAD	East Asian	Sub	3130	T=0.9994	G=0.0006		SAMN07488251
+gnomAD	Other	Sub	2146	T=0.9734	G=0.0266		SAMN07488248
+Allele Frequency Aggregator	Total	Global	19188	T=0.97493	G=0.02507	PRJNA507278	SAMN10492705
+Allele Frequency Aggregator	European	Sub	14286	T=0.97053	G=0.02947		SAMN10492695
+Allele Frequency Aggregator	African	Sub	2970	T=0.9929	G=0.0071		SAMN10492703
+Allele Frequency Aggregator	Other	Sub	948	T=0.978	G=0.022		SAMN11605645
+Allele Frequency Aggregator	Latin American 2	Sub	616	T=0.974	G=0.026		SAMN10492700
+Allele Frequency Aggregator	Latin American 1	Sub	154	T=0.994	G=0.006		SAMN10492699
+Allele Frequency Aggregator	Asian	Sub	116	T=1.000	G=0.000		SAMN10492704
+Allele Frequency Aggregator	South Asian	Sub	98	T=0.99	G=0.01		SAMN10492702
+1000 Genomes	Global	Study-wide	5008	T=0.9914	G=0.0086	PRJEB6930	SAMN07490465
+1000 Genomes	African	Sub	1322	T=0.9992	G=0.0008		SAMN07486022
+1000 Genomes	East Asian	Sub	1008	T=1.0000	G=0.0000		SAMN07486024
+1000 Genomes	Europe	Sub	1006	T=0.9771	G=0.0229		SAMN07488239
+1000 Genomes	South Asian	Sub	978	T=0.994	G=0.006		SAMN07486027
+1000 Genomes	American	Sub	694	T=0.981	G=0.019		SAMN07488242
+Genetic Variation in Estonia	Estonian	Study-wide	4480	T=0.9795	G=0.0205	PRJNA489787	
+Avon Longitudinal Study	British	Study-wide	3854	T=0.9683	G=0.0317	PRJEB7217	
+UK 10K Twins Study	British	Study-wide	3708	T=0.9644	G=0.0356	PRJEB7218	
+Korean Genome Project	Korean	Study-wide	1832	T=0.9989	G=0.0011	PRJNA609628	
+Genome of the Netherlands	Dutch	Study-wide	998	T=0.964	G=0.036	PRJEB5829	SAMN13000132
+Northern Sweden	Swedish	Study-wide	600	T=0.975	G=0.025	PPRJNA503394	SAMN10359154
+Qatar Genome Programme	Global	Study-wide	216	T=0.944	G=0.056	PRJNA288297	SAMN13019808
+Danish Reference Pangenome	Danish	Study-wide	40	T=0.93	G=0.07	PRJEB7725	SAMN13003120
+Simons Genome Diversity Proj.	Global	Study-wide	16	T=0.50	G=0.50	PRJNA586841	

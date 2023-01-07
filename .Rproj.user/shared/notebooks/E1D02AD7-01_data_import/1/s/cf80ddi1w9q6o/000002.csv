@@ -1,0 +1,5 @@
+"0","cemt_table <- "
+"0","  tibble(cemt = list.files(""/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/1/output2/H3K4me3/"", include.dirs = TRUE) %>% rep(6),"
+"0","         individual_number = c(rep(""1"", 4), rep(""2"", 4), rep(""3"", 4), rep(""4"", 4), rep(""5"", 4), rep(""6"", 4), rep(""7"", 4), rep(""8"", 4)) %>% rep(6),"
+"0","         mark = c(rep(""H3K4me3"", 8*4), rep(""H3K27ac"", 8*4), rep(""H3K4me1"", 8*4), rep(""H3K9me3"", 8*4), rep(""H3K27me3"", 8*4), rep(""H3K36me3"", 8*4)),"
+"0","         celltype = rep(c(""BC"", ""LP"", ""LC"", ""SC""), 192/4))"
