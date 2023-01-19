@@ -1,4 +1,0 @@
-"0","# All variants"
-"0","yan_vars <- readxl::read_excel(""data/41586_2021_3211_MOESM2_ESM_all_variants_tested.xlsx"")"
-"0","# SNP hits that affect TF binding"
-"0","yan_pbSNPs <- readxl::read_excel(""data/41586_2021_3211_MOESM4_ESM_all_pbSNPs.xlsx"")"

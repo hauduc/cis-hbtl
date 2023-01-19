@@ -1,4 +1,0 @@
-"0","# Import list of top hits"
-"0","top_hits <- read.csv(""data/top_hits.csv"") %>% pull(Variant)"
-"0","# Get ranges of the top hits"
-"0","top_hits_ranges <- consensus.all.spaas.rpkm.bed %>% plyranges::filter(rs %in% top_hits)"

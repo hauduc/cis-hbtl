@@ -1,6 +1,0 @@
-"0","venn_cis_hBTL_list <- "
-"0","  list(All = variant_calls_merged_annotated %>% `$`(key), "
-"0","       BC  = variant_calls_merged_annotated %>% plyranges::filter(cis_hBTL_BC == TRUE) %>% `$`(key), "
-"0","       LP  = variant_calls_merged_annotated %>% plyranges::filter(cis_hBTL_LP == TRUE) %>% `$`(key),"
-"0","       LC  = variant_calls_merged_annotated %>% plyranges::filter(cis_hBTL_LC == TRUE) %>% `$`(key),"
-"0","       SC  = variant_calls_merged_annotated %>% plyranges::filter(cis_hBTL_SC == TRUE) %>% `$`(key))"

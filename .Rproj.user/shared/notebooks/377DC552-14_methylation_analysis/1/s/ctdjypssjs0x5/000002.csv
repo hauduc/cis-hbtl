@@ -1,4 +1,0 @@
-"0","test_bm <- getBM(attributes = c(""chromosome_name"", ""start_position"", ""end_position"", ""hgnc_symbol"",""ensembl_gene_id"", ""ensembl_transcript_id""),"
-"0","      filters = ""ensembl_gene_id"","
-"0","      values = unique(top_hits_ranges$ensg_nearest_downstream),"
-"0","      mart = useEnsembl(biomart = ""genes"", dataset = ""hsapiens_gene_ensembl""))"

@@ -1,7 +1,0 @@
-"0","ase_depths <-"
-"0","  bind_rows(ase_depths_H3K4me3,"
-"0","            ase_depths_H3K27ac,"
-"0","            ase_depths_H3K4me1,"
-"0","            ase_depths_H3K9me3,"
-"0","            ase_depths_H3K27me3,"
-"0","            ase_depths_H3K36me3)"

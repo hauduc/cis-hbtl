@@ -1,5 +1,0 @@
-"0","all_overlaps_grouped_wide <- "
-"0","  all_overlaps_grouped %>% "
-"0","  pivot_wider(id_cols = c(mark, celltype, feature), names_from = enrichment_type, values_from = fraction_overlapping_mean, names_prefix = ""fraction overlapping mean "") %>% "
-"0","  mutate(`log2 of ratio of fraction overlapping cis-hBTLs vs. peaks` = log2(`fraction overlapping mean cis-hBTL` / `fraction overlapping mean peak`))"
-"0","  "

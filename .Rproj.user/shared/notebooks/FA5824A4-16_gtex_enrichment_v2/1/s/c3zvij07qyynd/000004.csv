@@ -1,6 +1,0 @@
-"0","ggsave(""plots/dotplot_gtex_fisher_exacts_odds_ratio_v2.png"","
-"0","       units = ""in"","
-"0","       width = 14,"
-"0","       height = 6)"
-"2","Bin width defaults to 1/30 of the range of the data. Pick better value with `binwidth`.
-"

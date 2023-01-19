@@ -1,3 +1,0 @@
-"0","gviz_genome <- ""hg38"""
-"0","gviz_cyto_bands <- read.table(""data/hg38_cytoBandIdeo.txt"", header = FALSE, sep = ""\t"", col.names = c(""chrom"", ""chromStart"", ""chromEnd"", ""name"", ""gieStain""))"
-"0","gviz_biomart_hg38_genes <- useEnsembl(biomart = ""genes"", dataset = ""hsapiens_gene_ensembl"")"
