@@ -25,7 +25,12 @@ library(pheatmap)
 library(umap)
 library(tidyverse)
 library(ggdendro)
+library(umap)
 
+# Set seed
+set.seed(0)
+
+# Constants
 const_canonical_chromosomes <- str_c("chr", c(1:22, "X"))
 
 vector_marks <- c("H3K4me3", "H3K27ac", "H3K4me1", "H3K9me3", "H3K27me3", "H3K36me3")
@@ -353,8 +358,94 @@ make_pheatmap_on_top_rois_populated_fraction_overlap("H3K36me3", rois_populated_
 ```
 
 Create function to turn top-varying matrices into umaps and plot
+Only keeping biologically-relevant examples
+Set up UMAP plotting
 ```{r}
-rois_populated_fraction_overlap_promoters
+# Create metadata dataframe
+rois_umap_fraction_overlap_biol_metadata <-
+  data.frame(sample = 
+               c("Individual_1_BC", "Individual_2_BC", "Individual_3_BC", "Individual_4_BC", "Individual_5_BC", "Individual_6_BC", "Individual_7_BC", "Individual_8_BC",
+                 "Individual_1_LP", "Individual_2_LP", "Individual_3_LP", "Individual_4_LP", "Individual_5_LP", "Individual_6_LP", "Individual_7_LP", "Individual_8_LP",
+                 "Individual_1_LC", "Individual_2_LC", "Individual_3_LC", "Individual_4_LC", "Individual_5_LC", "Individual_6_LC", "Individual_7_LC", "Individual_8_LC",
+                 "Individual_1_SC", "Individual_2_SC", "Individual_3_SC", "Individual_4_SC", "Individual_5_SC", "Individual_6_SC", "Individual_7_SC", "Individual_8_SC",
+                 "MCF10A", "hTERT_L9", "hTERT_L2"),
+             cell_type =
+               c(rep("BC", 8), rep("LP", 8), rep("LC", 8), rep("SC", 8), rep("Cell line", 3)),
+             individual = 
+               c(rep(c("14-17", "14-18", "11-18", "22-18", "24-18", "38-18", "30-18", "15-18"), 4), "MCF10A", "hTERT_L9", "hTERT_L2"))
+
+#########################################################################################################################################################################
+#########################################################################################################################################################################
+# Create function to map 
+make_rois_umap <- function(mark, feature = c("promoters", "enhancers", "cds")) {
+  # Map UMAP
+  get(str_c("rois_populated_fraction_overlap_", feature)) %>% 
+    `[[`(mark) %>% 
+    as_tibble() %>% 
+    select(-seqnames, -start, -end, -width, -strand, -tile_id, -samples_SD) %>% 
+    t() %>% 
+    scale() %>% 
+    umap() %>% 
+    `[[`("layout") %>% 
+    as.data.frame() %>% 
+    rename(UMAP1 = "V1",
+           UMAP2 = "V2") %>% 
+    mutate(sample = rownames(.)) %>%
+    inner_join(rois_umap_fraction_overlap_biol_metadata, by = "sample") %>% 
+    as.data.frame() %>% 
+    column_to_rownames("sample") %>% 
+    ggplot(aes(x = UMAP1, 
+               y = UMAP2, 
+               color = cell_type %>% factor(c("BC", "LP", "LC", "SC", "Cell line")),
+               shape = individual %>% factor(c("14-17", "14-18", "11-18", "22-18", "24-18", "38-18", "30-18", "15-18", "MCF10A", "hTERT_L9", "hTERT_L2")))) +
+    geom_point(size = 3) +
+    scale_color_manual(values = c("#3A68AE", "#FF3739", "#EB8353", "#464546", "#66c400")) +
+    scale_shape_manual(values = seq(0, 15)) +
+    labs(x = "UMAP1",
+         y = "UMAP2",
+         color = "Cell type",
+         shape = "Individual",
+         subtitle = str_c(mark, "Peak Fractional Overlap of", stringi::stri_trans_totitle(feature), sep = " ")) +
+    theme_bw() + 
+    theme(aspect.ratio = 1) +
+    
+    # Additional text styling (from Jonathan)
+    theme(axis.text.x   = element_text(size = 9, angle = 0),
+          axis.text.y   = element_text(size = 9, angle = 0),
+          axis.title    = element_text(size = 12),
+          legend.text   = element_text(size = 12),
+          legend.title  = element_text(size = 12),
+          strip.text    = element_text(size = 12),
+          plot.subtitle = element_text(size = 14, hjust = 0.5),
+          plot.caption  = element_text(size = 10, hjust = 0))
+  
+  # Save programatically
+  ggsave(str_c("plots/umap_frac_overlap_", mark, "_", feature, ".png"))
+}
 ```
 
+Plot all UMAPs programatically for relevant features for each mark
+```{r}
+# H3K4me3
+make_rois_umap("H3K4me3",  "promoters")
 
+# H3K27ac
+make_rois_umap("H3K27ac",  "promoters")
+make_rois_umap("H3K27ac",  "enhancers")
+
+# H3K4me1
+make_rois_umap("H3K4me1",  "enhancers")
+
+# H3K9me3
+make_rois_umap("H3K9me3",  "promoters")
+make_rois_umap("H3K9me3",  "enhancers")
+make_rois_umap("H3K9me3",  "cds")
+
+# H3K27me3
+make_rois_umap("H3K27me3", "promoters")
+make_rois_umap("H3K27me3", "enhancers")
+make_rois_umap("H3K27me3", "cds")
+
+# H3K36me3
+make_rois_umap("H3K36me3", "cds")
+```

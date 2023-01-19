@@ -352,7 +352,7 @@ ggsave("plots/rois_populated_frac_overlap_mean_diff_bar_abs_0.8.png",
        height = 10)
 ```
 
-Number of regions with outlier sample (relative)
+Number of regions with outlier sample (relative) - VERSION 1 WITH ALL REGIONS
 ```{r}
 # Plot 0.2
 rois_populated_fraction_overlap_summarized_stats_prepped %>% 
@@ -399,3 +399,39 @@ ggsave("plots/rois_populated_frac_overlap_mean_diff_bar_rel_0.8.png",
        width  = 16,
        height = 10)
 ```
+
+VERSION 2 WITH ONLY IMPORTANT REGIONS
+```{r}
+# Plot 0.5
+rois_populated_fraction_overlap_summarized_stats_prepped %>% 
+  
+  # Set factors to characters for easy filtering
+  mutate(feature_type = feature_type %>% as.character(),
+         mark         = mark         %>% as.character()) %>% 
+  
+  # Only keep biologically-relevant modalities
+  filter((mark == "H3K4me3" & feature_type == "promoter")  |
+         (mark == "H3K27ac" & feature_type == "promoter")  |
+         (mark == "H3K4me1" & feature_type == "enhancer")  |
+         (mark == "H3K9me3" & feature_type == "promoter")  |
+         (mark == "H3K27me3" & feature_type == "enhancer") |
+         (mark == "H3K36me3" & feature_type == "promoter")) %>% 
+  
+  # Return to factor form
+  mutate(feature_type = feature_type %>% factor(c("promoter", "enhancer")),
+         mark         = mark         %>% factor(c("H3K4me3", "H3K27ac", "H3K4me1", "H3K9me3", "H3K27me3", "H3K36me3"))) %>% 
+  
+  # Plot
+  ggplot(aes(x = mark, fill = fraction_overlaps_all_less_than_0.5_from_mean)) +
+  facet_grid(rows = vars(cell_type)) +
+  geom_bar(position = "fill", stat = "count") +
+  labs(x = "Mark",
+       y = element_blank(),
+       fill = "Fraction of promoters or enhancers where\npeak coverage from all samples differs\n< 50% from mean peak coverage") +
+  theme_bw() + 
+  scale_fill_manual(values = c("#4db04a", "#e31b1b"))
+ggsave("plots/rois_populated_frac_overlap_mean_diff_bar_rel_0.5_v2.png",
+       units  = "in",
+       width  = 16, height = 10)
+```
+

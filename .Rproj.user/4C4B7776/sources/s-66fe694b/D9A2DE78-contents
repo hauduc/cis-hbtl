@@ -57,6 +57,7 @@ consensus.all.spaas.rpkm.bed %>%
   ggplot(aes(x = as.factor(individuals_involved), y = number_of_spaas, fill = `Cis-hBTL Type`)) +
   geom_bar(stat = "identity", position = position_dodge()) +
   theme_bw() +
+  scale_fill_grey() +
   labs(x = "Number of Individuals Involved", y = "Number of cis-hBTLs")
 ggsave("plots/barplot_individuals_involved.png",
        units = "in",

@@ -4,6 +4,13 @@ ase
 data
 plots
 plots_gviz
+plots_test
 results
 roi_alignments
 test
+.Rproj.user
+*.html
+*.R
+*.RData
+*.Rhistory
+.gitignore
