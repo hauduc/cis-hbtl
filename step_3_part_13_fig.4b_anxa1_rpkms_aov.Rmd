@@ -1,0 +1,83 @@
+---
+title: "ANXA1 RPKM Analysis v2"
+output: html_notebook
+---
+```{r}
+# Load constants
+source("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/source/setup.R")
+```
+
+# Read in data
+```{r}
+# Individuals
+anxa1_rpkms_individuals <- 
+  lapply(vector_celltypes, function(current_celltype) {
+    lapply(seq_along(vector_individuals), function(i_individual) {
+      
+      tibble(`sample type` = "primary cell",
+             individual = vector_individuals_encoded[i_individual],
+             celltype = current_celltype,
+             `rs75071948 allele` = ifelse(i_individual == 7, "alt", "ref"),
+             rpkm_filepath = 
+               read_tsv(str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/rpkm/breast_normal_rpkms_", current_celltype, ".tsv"), 
+                        col_names = FALSE, show_col_types = FALSE, progress = FALSE) %>% 
+               pull() %>% 
+               `[`(i_individual),
+             `ANXA1 RPKM` = 
+               read_tsv(str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/rpkm/breast_normal_rpkms_", current_celltype, ".tsv"), 
+                        col_names = FALSE, show_col_types = FALSE, progress = FALSE) %>% 
+               pull() %>% 
+               `[`(i_individual) %>% 
+               read_tsv(col_names = FALSE, show_col_types = FALSE, progress = FALSE) %>% 
+               filter(X1 == "ENSG00000135046") %>% 
+               pull(X3))
+      
+    }) %>% do.call("bind_rows", .)
+  }) %>% do.call("bind_rows", .)
+
+# cell liness
+anxa1_rpkms_cell_lines <-
+  tibble(`sample type` = "cell lines",
+         individual = c("MCF10A", "hTERT-L9", "hTERT-L2"),
+         celltype   = "cell lines",
+         `rs75071948 allele` = c("ref", "alt", "alt"),
+         rpkm_filepath = 
+           c("/projects/edcc_new/reference_epigenomes/CEMT_7/hg38/RNA-Seq/hg38.A24901.CEMT_7.RNA.hg38.C2A6RACXX_5_TGCTGG/A24901.CEMT_7.RNA.hg38.C2A6RACXX_5_TGCTGG_withJunctionsOnGenome_dupsFlagged/coverage/A24901.CEMT_7.RNA.hg38.C2A6RACXX_5_TGCTGG_withJunctionsOnGenome_dupsFlagged.G.A.rpkm.pc",
+             "/projects/edcc_new/reference_epigenomes/CEMT_8/hg38/RNA-Seq/hg38.A24902.CEMT_8.RNA.hg38.C2A6RACXX_6_CCGTCC/A24902.CEMT_8.RNA.hg38.C2A6RACXX_6_CCGTCC_withJunctionsOnGenome_dupsFlagged/coverage/A24902.CEMT_8.RNA.hg38.C2A6RACXX_6_CCGTCC_withJunctionsOnGenome_dupsFlagged.G.A.rpkm.pc",
+             "/projects/edcc_new/reference_epigenomes/CEMT_9/hg38/RNA-Seq/hg38.A24903.CEMT_9.RNA.hg38.C2A6RACXX_7_TGACCA/A24903.CEMT_9.RNA.hg38.C2A6RACXX_7_TGACCA_withJunctionsOnGenome_dupsFlagged/coverage/A24903.CEMT_9.RNA.hg38.C2A6RACXX_7_TGACCA_withJunctionsOnGenome_dupsFlagged.G.A.rpkm.pc")) %>% 
+  mutate(`ANXA1 RPKM` = rpkm_filepath %>% read_tsv(col_names = FALSE, show_col_types = FALSE, progress = FALSE) %>% filter(X1 == "ENSG00000135046") %>% pull(X3))
+
+# Combine
+anxa1_rpkms_all <-
+  bind_rows(anxa1_rpkms_individuals, anxa1_rpkms_cell_lines) %>% 
+  mutate(`sample type`       = `sample type`       %>% factor(c("primary cell", "cell lines")),
+         celltype            = celltype            %>% factor(c(vector_celltypes, "cell lines")),
+         `rs75071948 allele` = `rs75071948 allele` %>% factor(c("ref", "alt")))
+```
+
+# Plot faceted
+```{r}
+# All as a faceted grid
+anxa1_rpkms_all %>%
+  ggplot(aes(x = `rs75071948 allele`, y = `ANXA1 RPKM`)) +
+  geom_point() +
+  facet_grid(~ celltype) +
+  ggsignif::geom_signif(comparisons = list(c("ref", "alt")), 
+                        test = "t.test",
+                        test.args = list(alternative = "two.sided", var.equal = TRUE),
+                        map_signif_level = c("***" = 0.001, "**" = 0.01, "*" = 0.05),
+                        y_position = 550, 
+                        tip_length = 0.01) +
+  scale_y_continuous(limits = c(0, 600), n.breaks = 7) +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(), 
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(), 
+        panel.grid.minor.y = element_blank())
+ggsave(str_c("plots/paper_fig.4b_dotplot_anxa1_rpkm_t.test_faceted_v3.png"),
+       units = "in",
+       dpi = 600,
+       width  = 5.5 * 0.75,
+       height = 4.0 * 0.75)
+```
+

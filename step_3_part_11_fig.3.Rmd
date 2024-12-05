@@ -1,0 +1,1214 @@
+---
+title: "Paper Figure 3 Recap v4"
+output: html_notebook
+---
+## Upstream Analysis
+# Set constants
+```{r}
+# Load constants
+source("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/source/setup.R")
+```
+
+# 3a - Venn bars
+# Preparation
+```{r}
+# Read in necessary data
+consensus.all.spaas.rpkm.bed <- readRDS("objects/consensus.all.spaas.rpkm.bed.RDS")
+# Merged variant calls
+variant_calls_merged <- readRDS("objects/variant_calls_merged.RDS")
+# List variant calls for analyses downstream
+list_variant_calls <- readRDS("objects/list_variant_calls.RDS")
+
+# 2a main marks (H3K27ac, H3K4me1, H3K4me3, H3K27me3, H3K9me3)
+# Annotate 
+variant_calls_merged_annotated <-
+  variant_calls_merged %>% 
+  plyranges::mutate(key = str_c(as.character(seqnames(.)), "_", as.character(start(.)), "_", as.character(end(.))),
+                    all = TRUE,
+                    cis_hBTL_any = countOverlaps(., consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark %in% vector_marks_fig2)) > 0,
+                    cis_hBTL_BC  = countOverlaps(., consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark %in% vector_marks_fig2) %>% plyranges::filter(celltype == "BC")) > 0,
+                    cis_hBTL_LP  = countOverlaps(., consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark %in% vector_marks_fig2) %>% plyranges::filter(celltype == "LP")) > 0,
+                    cis_hBTL_LC  = countOverlaps(., consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark %in% vector_marks_fig2) %>% plyranges::filter(celltype == "LC")) > 0,
+                    cis_hBTL_SC  = countOverlaps(., consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark %in% vector_marks_fig2) %>% plyranges::filter(celltype == "SC")) > 0)
+
+variants <- 
+  variant_calls_merged_annotated %>% 
+  mcols() %>%
+  as_tibble() %>% 
+  select(-cis_hBTL_any) %>% 
+  `names<-`(c("key", "all", "BC", "LP", "LC", "SC"))
+
+variants_combinations <-
+  c(
+    # none
+    `none` = 
+      (!variants$LC & !variants$LP & !variants$BC & !variants$SC) %>% sum(),
+    # LC
+    `LC` = 
+      ( variants$LC & !variants$LP & !variants$BC & !variants$SC) %>% sum(),
+    # LP
+    `LP` = 
+      (!variants$LC &  variants$LP & !variants$BC & !variants$SC) %>% sum(),
+    # BC
+    `BC` = 
+      (!variants$LC & !variants$LP &  variants$BC & !variants$SC) %>% sum(),
+    # SC
+    `SC` = 
+      (!variants$LC & !variants$LP & !variants$BC &  variants$SC) %>% sum(),
+    # LC LP
+    `LC LP` = 
+      ( variants$LC &  variants$LP & !variants$BC & !variants$SC) %>% sum(),
+    # LC BC
+    `LC BC` = 
+      ( variants$LC & !variants$LP &  variants$BC & !variants$SC) %>% sum(),
+    # LC SC
+    `LC SC` = 
+      ( variants$LC & !variants$LP & !variants$BC &  variants$SC) %>% sum(),
+    # LP BC
+    `LP BC` = 
+      (!variants$LC &  variants$LP &  variants$BC & !variants$SC) %>% sum(),
+    # LP SC
+    `LP SC` = 
+      (!variants$LC &  variants$LP & !variants$BC &  variants$SC) %>% sum(),
+    # BC SC
+    `BC SC` = 
+      (!variants$LC & !variants$LP &  variants$BC &  variants$SC) %>% sum(),
+    # LC LP BC
+    `LC LP BC` = 
+      ( variants$LC &  variants$LP &  variants$BC & !variants$SC) %>% sum(),
+    # LC LP SC
+    `LC LP SC` = 
+      ( variants$LC &  variants$LP & !variants$BC &  variants$SC) %>% sum(),
+    # LC BC SC
+    `LC BC SC` = 
+      ( variants$LC & !variants$LP &  variants$BC &  variants$SC) %>% sum(),
+    # LP BC SC
+    `LP BC SC` = 
+      (!variants$LC &  variants$LP &  variants$BC &  variants$SC) %>% sum(),
+    # LC LP BC SC
+    `LC LP BC SC` = 
+      ( variants$LC &  variants$LP &  variants$BC &  variants$SC) %>% sum()) %>% 
+  {tibble(combination = names(.),
+          number      = unname(.))} %>% 
+  mutate(LC = str_detect(combination, "LC"),
+         LP = str_detect(combination, "LP"),
+         BC = str_detect(combination, "BC"),
+         SC = str_detect(combination, "SC"),
+         .after = combination) %>% 
+  mutate(proportion = number / nrow(variants))
+
+variants_combinations_v2 <-
+  variants_combinations %>% 
+  mutate(combination = combination %>% factor(rev(variants_combinations$combination))) %>% 
+  arrange(combination)
+
+# Calc positions
+variants_combinations_positions <-
+  variants_combinations_v2 %>% 
+  mutate(cumulative_proportion = cumsum(proportion), 
+         pos = 0.5 * (cumulative_proportion + lag(cumulative_proportion, default = 0))) %>% 
+  select(combination, pos) 
+
+# Convert to long form
+variants_combinations_long <- 
+  variants_combinations %>% 
+  pivot_longer(cols = c(LC, LP, BC, SC), names_to = "single_celltype_present", values_to = "single_celltype_is_present") %>% 
+  mutate(single_celltype_present = single_celltype_present %>% factor(vector_celltypes)) %>% 
+  mutate(single_celltype_color = case_when(single_celltype_is_present == TRUE  ~ vector_celltype_colors[single_celltype_present],
+                                           single_celltype_is_present == FALSE ~ "#00000000")) %>% 
+  left_join(variants_combinations_positions, by = join_by(combination))
+
+# v2
+variants_combinations_positions_v2 <-
+  variants_combinations_v2 %>% 
+  arrange(desc(row_number())) %>% 
+  mutate(cumulative_proportion = cumsum(proportion), 
+         pos = 0.5 * (cumulative_proportion + lag(cumulative_proportion, default = 0))) %>% 
+  select(combination, pos) 
+
+# Convert to long form
+variants_combinations_long_v2 <- 
+  variants_combinations %>% 
+  pivot_longer(cols = c(LC, LP, BC, SC), names_to = "single_celltype_present", values_to = "single_celltype_is_present") %>% 
+  mutate(single_celltype_present = single_celltype_present %>% factor(vector_celltypes)) %>% 
+  mutate(single_celltype_color = case_when(single_celltype_is_present == TRUE  ~ vector_celltype_colors[single_celltype_present],
+                                           single_celltype_is_present == FALSE ~ "#00000000")) %>% 
+  left_join(variants_combinations_positions, by = join_by(combination))
+
+
+# # Plot all positions
+# variants_combinations_long %>% 
+#   ggplot(aes(x = pos, y = fct_rev(single_celltype_present), fill = single_celltype_color)) +
+#   geom_tile(aes(width = proportion)) +
+#   scale_x_continuous(labels = scales::percent, 
+#                      expand = expansion(mult = c(0.005, 0.05)),
+#                      breaks = scales::breaks_extended(6)) +
+#   scale_fill_identity() +
+#   labs(x = element_blank(),
+#        y = element_blank()) +
+#   theme_classic() +
+#   theme(axis.text.x = element_text(size = 20),
+#         axis.text.y = element_text(size = 20),
+#         axis.ticks.y = element_blank()) +
+#   theme(axis.text.y = element_text(color = rev(vector_celltype_colors)))
+# ggsave("plots/venn_bars_all_fig2_marks_v5.png",
+#        units = "in",
+#        dpi = 600,
+#        width = 16,
+#        height = 3.5)
+# 
+# # Plot all excluding none positions
+# variants_combinations_long %>% 
+#   filter(combination != "none") %>% 
+#   ggplot(aes(x = pos, y = fct_rev(single_celltype_present), fill = single_celltype_color)) +
+#   geom_tile(aes(width = proportion)) +
+#   scale_x_continuous(labels = scales::percent, 
+#                      expand = expansion(mult = c(0.005, 0.05)),
+#                      breaks = scales::breaks_extended(6)) +
+#   scale_fill_identity() +
+#   labs(x = element_blank(),
+#        y = element_blank()) +
+#   theme_classic() +
+#   theme(axis.text.x = element_text(size = 20),
+#         axis.text.y = element_text(size = 20),
+#         axis.ticks.y = element_blank()) +
+#   theme(axis.text.y = element_text(color = rev(vector_celltype_colors)))
+# ggsave("plots/venn_bars_excl_none_fig2_marks_v5.png",
+#        units = "in",
+#        dpi = 600,
+#        width  = 16,
+#        height = 3.5)
+
+# Plot all excluding none positions FOR POWERPOINT
+variants_combinations_long %>% 
+  filter(combination != "none") %>% 
+  arrange(desc(row_number())) %>% 
+  ggplot(aes(x = pos, y = fct_rev(single_celltype_present), fill = single_celltype_color)) +
+  geom_tile(aes(width = proportion)) +
+  scale_x_continuous(labels = scales::percent, 
+                     expand = expansion(mult = c(0, 0.00001)),
+                     breaks = scales::breaks_width(0.005), 
+                     sec.axis = sec_axis(transform = ~ . / (1 - (variants_combinations %>% filter(combination == "none") %>% pull(proportion))), 
+                                         labels = scales::percent,
+                                         name = expression(paste("proportion of ", italic("cis"), "-hBTL variants")))) +
+  scale_fill_identity() +
+  labs(x = "proportion of all variants",
+       y = element_blank()) +
+  theme_bw() +
+  theme(axis.text.x         = element_text(size = 16),
+        axis.title.x.bottom = element_text(size = 16),
+        axis.title.x.top    = element_text(size = 16),
+        axis.text.y         = element_text(size = 20, color = rev(vector_celltype_colors)),
+        axis.ticks.y        = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.border        = element_blank(),
+        axis.line.x.bottom  = element_line(color = "black"),
+        axis.line.x.top     = element_line(color = "black"),
+        plot.margin         = unit(c(0.05, 0.4, 0.05, 0.05), "in"))
+# # Powerpoint dimensions
+# ggsave("plots/paper_fig.3a_venn_bars_excl_none_fig2_marks_v5_powerpoint_v2.png",
+#        units = "in",
+#        dpi = 600,
+#        width  = 6 * 0.95,
+#        height = 5 * 0.95)
+# Paper dimensions
+ggsave("plots/paper_fig.3a_venn_bars_excl_none_fig2_marks_v6.png",
+       units = "in",
+       dpi = 600,
+       width  = 15.0 * 1,
+       height = 4.00 * 1)
+
+# Get numbers for paper
+# Remember that this is for H3K27ac, H3K4me1, H3K4me3, H3K27me3, and H3K9me3
+
+# Get percentage of cell-type-unique cis-hBTLs
+(variants_combinations %>% filter(combination == "LC LP BC SC") %>% pull(number) %>% sum()) / (variants_combinations %>% filter(combination != "none") %>% pull(number) %>% sum())
+
+# Epithelial
+(variants_combinations %>% filter(combination == "LC LP BC") %>% pull(number) %>% sum())    / (variants_combinations %>% filter(combination != "none") %>% pull(number) %>% sum())
+
+# Count total cis-hBTLs
+variants_combinations %>% 
+  filter(combination != "none") %>% 
+  pull(number) %>% 
+  sum()
+
+# Count cell-type-specific cis-hBTLs
+variants_combinations %>% 
+  filter(combination %in% vector_celltypes) %>% 
+  pull(number) %>% 
+  sum()
+
+# Count universal cis-hBTLs
+variants_combinations %>% 
+  filter(combination %in% "LC LP BC SC") %>% 
+  pull(number) %>% 
+  sum()
+
+# Count top cell type pairings
+variants_combinations %>% 
+  slice(6:11) %>% 
+  arrange(desc(number))
+
+# Count number of het/hom positions
+tmp1 <- 
+  consensus.all.spaas.rpkm.bed %>% 
+  join_overlap_left(list_variant_calls %>% as("GRangesList") %>% unlist() %>% sort())
+
+(tmp1$AF %>% table() %>% `[`(1)) / (tmp1$AF %>% table() %>% sum())
+
+# Count number of top hits (new)
+consensus.all.spaas.rpkm.bed %>% 
+  as_tibble() %>% 
+  filter(mark %in% vector_marks_fig2) %>% 
+  filter(t_test_p_val_fdr_adj < 0.05) %>% 
+  nrow()
+
+# Count % of singletons
+(consensus.all.spaas.rpkm.bed %>% 
+    as_tibble() %>% 
+    filter(mark %in% vector_marks_fig2) %>% 
+    filter(individuals_involved == 1) %>% 
+    nrow()) /
+  (consensus.all.spaas.rpkm.bed %>% 
+     as_tibble() %>% 
+     filter(mark %in% vector_marks_fig2) %>% 
+     nrow())
+
+# Correlation of number of individuals with allele frequency
+cor(consensus.all.spaas.rpkm.bed %>% as_tibble() %>% filter(mark %in% vector_marks_fig2) %>% pull(mean_allele_frequency),
+    consensus.all.spaas.rpkm.bed %>% as_tibble() %>% filter(mark %in% vector_marks_fig2) %>% pull(mean_variant_call_quality),
+    method = "spearman", 
+    use = "pairwise.complete.obs")
+
+# Enrichment of alternate alleles
+(consensus.all.spaas.rpkm.bed %>% 
+    as_tibble() %>% 
+    filter(mark %in% vector_marks_fig2) %>% 
+    filter(spaa == TRUE) %>% 
+    nrow()) /
+  (consensus.all.spaas.rpkm.bed %>% 
+     as_tibble() %>% 
+     filter(mark %in% vector_marks_fig2) %>% 
+     nrow())
+
+# Fraction of cis-hBTLs that are cell type-specific
+(variants_combinations %>% filter(combination %in% vector_celltypes) %>% pull(proportion) %>% sum()) / (variants_combinations %>% filter(combination != "none") %>% pull(proportion) %>% sum())
+```
+
+# 3b Sequence ontology enrichment
+# Load in UCSC knownGene features
+```{r}
+# Read in peaks
+list_peak_wasp <- readRDS("objects/list_peak_wasp.RDS")
+
+# Read in standard genomic features
+txdb_grlist_ba <- readRDS("objects/txdb_grlist_ba.RDS")
+
+# Function to pull out the fraction of query records that overlap with a knownGene feature
+get_feature_frac_overlaps <- function(query, features = txdb_grlist_ba) {
+  
+  # Instantiate fractional overlaps results table
+  final_feature_overlaps <- tibble()
+  
+  # Loop through types of features and count up fraction query features (i.e. peaks or cis-hBTLs) covered by a sequency ontology (exon, intron, fiveUTR, etc...)
+  for (feature_names in names(features)) {
+    current_feature_overlaps <- 
+      tibble(feature = feature_names, 
+             fraction_overlapping = (query %>% join_overlap_intersect(features[[feature_names]]) %>% width() %>% sum()) / (query %>% width() %>% sum()))
+    
+    final_feature_overlaps <- bind_rows(final_feature_overlaps, current_feature_overlaps)
+  }
+  
+  # Return fractional overlaps
+  final_feature_overlaps
+}
+
+# Initiate
+all_overlaps_v2 <- tibble()
+# Loop
+for (MARK in vector_marks) {
+  for (CELLTYPE in vector_celltypes) {
+    for (INDIVIDUAL in vector_individuals) {
+      # Indicate progress
+      message(timestamp(quiet = TRUE), " Processing ", MARK, " ", CELLTYPE, " ", INDIVIDUAL, "...")
+      
+      # Create modality
+      MODALITY <- str_c(MARK, CELLTYPE, sep = "_")
+      
+      # Get baseline peaks overlap fraction with each feature
+      peak_frac_overlaps <- 
+        list_peak_wasp[[MODALITY]][[INDIVIDUAL]] %>% 
+        keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse") %>% 
+        get_feature_frac_overlaps() %>% 
+        mutate(enrichment_type = "peak",
+               .before = feature)
+      
+      # Get cis-hBTLs overlap fraction with each feature
+      cis_hBTL_frac_overlaps <- 
+        consensus.all.spaas.rpkm.bed %>%
+        keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse") %>% 
+        plyranges::filter(mark == MARK, celltype == CELLTYPE, get(INDIVIDUAL) == TRUE) %>% 
+        get_feature_frac_overlaps() %>% 
+        mutate(enrichment_type = "cis-hBTL",
+               .before = feature)
+      
+      # Join
+      joined_overlaps <- 
+        bind_rows(peak_frac_overlaps,
+                  cis_hBTL_frac_overlaps) %>% 
+        mutate(mark = MARK,
+               celltype = CELLTYPE,
+               individual = INDIVIDUAL,
+               .before = feature)
+      
+      all_overlaps_v2 <-
+        bind_rows(all_overlaps_v2, joined_overlaps)
+    }
+  }
+}
+
+all_overlaps_v2_grouped_wide <- 
+  all_overlaps_v2 %>% 
+  filter(mark %in% vector_marks_fig2) %>% 
+  group_by(enrichment_type, mark, celltype, feature) %>% 
+  summarize(fraction_overlapping_mean = mean(fraction_overlapping)) %>% 
+  ungroup() %>% 
+  # Create ordered factors for custom ordering of variables in panels of ggplot below
+  mutate(enrichment_type = enrichment_type %>% factor(c("peak", "cis-hBTL")),
+         mark = mark %>% factor(vector_marks_fig2),
+         celltype = celltype %>% factor(vector_celltypes),
+         feature = feature %>% factor(c("intergenic", "enhancer_encode", "enhancer_pellacani", "transcript", "promoter", "intron", "exon", "cds", "fiveUTR", "threeUTR"))) %>% 
+  pivot_wider(id_cols = c(mark, celltype, feature), names_from = enrichment_type, values_from = fraction_overlapping_mean, names_prefix = "fraction overlapping mean ") %>% 
+  mutate(`log2 of ratio of fraction overlapping cis-hBTLs vs. peaks` = log2(`fraction overlapping mean cis-hBTL` / `fraction overlapping mean peak`))
+
+# Visualize
+# Main marks
+all_overlaps_v2_grouped_wide %>% 
+  filter(mark %in% vector_marks_fig2) %>% 
+  filter(feature %in% c("promoter", "enhancer_pellacani", "exon", "intron", "intergenic")) %>% 
+  mutate(feature = if_else(feature == "enhancer_pellacani", "enhancer", feature)) %>% 
+  mutate(feature = feature %>% factor(c("promoter", "enhancer", "exon", "intron", "intergenic"))) %>% 
+  ggplot(aes(x = feature, y = `log2 of ratio of fraction overlapping cis-hBTLs vs. peaks`)) +
+  geom_hline(yintercept = 0,
+             linetype = "dotted", 
+             color = "black") +
+  scale_y_continuous(limits = c(-1.5, 1.5), n.breaks = 7) +
+  geom_boxplot() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = element_blank(), 
+       y = expression(paste("log2(", italic("cis"), "-hBTLs over peaks)")))
+ggsave("plots/paper_fig.3b_all_overlaps_v2_with_genomic_features_transformed_boxplot_v5.png",
+       units = "in",
+       dpi = 600,
+       width  = 2.50 * 0.825,
+       height = 4.00 * 0.825)
+
+# # Remaining
+# all_overlaps_v2_grouped_wide %>%
+#   filter(mark %in% vector_marks_remaining) %>%
+#   filter(feature %in% c("promoter", "enhancer_pellacani", "intron", "exon", "intergenic")) %>%
+#   mutate(feature = if_else(feature == "enhancer_pellacani", "enhancer", feature)) %>%
+#   mutate(feature = feature %>% factor(c("promoter", "enhancer", "exon", "intron", "intergenic"))) %>%
+#   ggplot(aes(x = feature, y = `log2 of ratio of fraction overlapping cis-hBTLs vs. peaks`)) +
+#   geom_hline(yintercept = 0,
+#              linetype = "dotted",
+#              color = "black") +
+#   ylim(c(-2, 2)) +
+#   geom_boxplot() +
+#   theme_bw() #+
+#   # theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1),
+#   #       panel.grid.major.x = element_blank(),
+#   #       panel.grid.minor.x = element_blank(),
+#   #       panel.grid.major.y = element_blank(),
+#   #       panel.grid.minor.y = element_blank()) +
+#   # labs(x = element_blank(),
+#   #      y = expression(paste("log2(", italic("cis"), "-hBTLs over peaks)")))
+# ggsave("plots/all_overlaps_v2_with_genomic_features_transformed_boxplot_v4_remaining.png",
+#        units = "in",
+#        width  = 4.0 * 0.825,
+#        height = 4.0 * 0.825)
+```
+
+# 3c Unique Peak Enrichment
+```{r}
+# Prep data
+list_peak <- readRDS("objects/list_peak.RDS")
+
+# Main lapply
+range_hBTL_enrichment_stats <- 
+  lapply(vector_modalities, function(current_modality) {
+    
+    # Establish mark and celltype strings
+    current_mark     <- current_modality %>% str_split_i(pattern = "_", i = 1)
+    current_celltype <- current_modality %>% str_split_i(pattern = "_", i = 2)
+    current_individual_pattern <- str_c("Individual_._", current_celltype)
+    
+    # Prepare cis-hBTLs
+    current_id_ranges_cis_hBTL <- 
+      consensus.all.spaas.rpkm.bed %>% 
+      plyranges::filter(mark == current_mark, celltype == current_celltype)
+    
+    # Prepare peaks
+    current_id_ranges_peak <- 
+      names(list_peak[[current_mark]]) %>% 
+      str_detect(current_individual_pattern) %>% 
+      keep(list_peak[[current_mark]], .) %>% 
+      unlist() %>% 
+      disjoin_ranges()
+    
+    # Compare peaks and cis-hBTLs
+    current_unique_peak_enrichment <- 
+      current_id_ranges_peak %>% 
+      plyranges::mutate(overlaps_cis_hBTLs = countOverlaps(., current_id_ranges_cis_hBTL),
+                        has_a_cis_hBTL = overlaps_cis_hBTLs > 0)
+    
+    # Calculate stats and place in stackable dataframe
+    tibble(mark = current_mark,
+           celltype = current_celltype,
+           
+           frac_of_tile_width_with_cis_hBTL =              
+             sum(width(current_unique_peak_enrichment %>% plyranges::filter(has_a_cis_hBTL == TRUE))) / 
+             sum(width(current_unique_peak_enrichment)),
+           
+           frac_of_tile_width_with_cis_hBTL_per_cis_hBTL = 
+             sum(width(current_unique_peak_enrichment %>% plyranges::filter(has_a_cis_hBTL == TRUE))) / 
+             sum(width(current_unique_peak_enrichment)) / 
+             length(current_id_ranges_cis_hBTL),
+           
+           frac_of_tiles_with_cis_hBTL =                 
+             length(current_unique_peak_enrichment %>% plyranges::filter(has_a_cis_hBTL == TRUE)) / 
+             length(current_unique_peak_enrichment),
+           
+           frac_of_tiles_with_cis_hBTL_per_cis_hBTL =    
+             length(current_unique_peak_enrichment %>% plyranges::filter(has_a_cis_hBTL == TRUE)) / 
+             length(current_unique_peak_enrichment) / 
+             length(current_id_ranges_cis_hBTL))
+    
+  }) %>% do.call("bind_rows", .) %>% 
+  as_tibble() %>% 
+  mutate(frac_of_tile_width_with_cis_hBTL_per_cis_hBTL_million = frac_of_tile_width_with_cis_hBTL_per_cis_hBTL * 1e6,
+         frac_of_tiles_with_cis_hBTL_per_cis_hBTL_million      = frac_of_tiles_with_cis_hBTL_per_cis_hBTL      * 1e6) %>% 
+  mutate(mark = mark %>% factor(vector_marks),
+         celltype = celltype %>% factor(vector_celltypes))
+
+# Rate per peak width per cis-hBTL + boxplots
+# Main marks
+range_hBTL_enrichment_stats %>%
+  mutate(mark = mark %>% factor(vector_marks),
+         celltype = celltype %>% factor(vector_celltypes)) %>% 
+  filter(mark %in% vector_marks_fig2) %>% 
+  ggplot(aes(x = mark, y = frac_of_tile_width_with_cis_hBTL_per_cis_hBTL_million)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(aes(color = celltype), binaxis = "y", stackdir = "center", dotsize = 1.0) +
+  ylim(c(0, 4.1)) +
+  labs(x = element_blank(),
+       y = expression(paste(italic("cis"), "-hBTLs per Mb of peak")),
+       color = "cell type") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  scale_color_manual(values = vector_celltype_colors)
+ggsave("plots/paper_fig.3c_tiles_w_cis_hBTLs_normalized_v6.png",
+       units = "in",
+       dpi = 600,
+       width  = 3.75 * 0.75,
+       height = 5.00 * 0.75)
+
+# Remaining
+range_hBTL_enrichment_stats %>%
+  mutate(mark = mark %>% factor(vector_marks),
+         celltype = celltype %>% factor(vector_celltypes)) %>% 
+  filter(mark %in% vector_marks_remaining) %>% 
+  ggplot(aes(x = mark, y = frac_of_tile_width_with_cis_hBTL_per_cis_hBTL_million)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(aes(color = celltype), binaxis = "y", stackdir = "center", dotsize = 1.0) +
+  ylim(c(0, 4.1)) +
+  labs(x = element_blank(),
+       y = expression(paste(italic("cis"), "-hBTLs per Mb of peak")),
+       color = "cell type") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  scale_color_manual(values = vector_celltype_colors)
+ggsave("plots/paper_fig.3c_supp_tiles_w_cis_hBTLs_normalized_v6.png",
+       units = "in",
+       dpi = 600,
+       width  = 3.50 * 0.75,
+       height = 5.00 * 0.75)
+
+# Stats for paper
+# By each mark
+range_hBTL_enrichment_stats %>% 
+  select(mark, celltype, frac_of_tile_width_with_cis_hBTL_per_cis_hBTL_million) %>% 
+  group_by(mark) %>% 
+  summarize(mean_frac_of_tile_width_with_cis_hBTL_per_cis_hBTL_million = mean(frac_of_tile_width_with_cis_hBTL_per_cis_hBTL_million, na.rm = TRUE)) %>% 
+  mutate(histone_type = case_when(mark %in% c("H3K27ac",  "H3K4me3")  ~ "active",
+                                  mark %in% c("H3K27me3", "H3K9me3")  ~ "repressive",
+                                  mark %in% c("H3K4me1",  "H3K36me3") ~ "other"),
+         .after = mark)
+
+# By group
+range_hBTL_enrichment_stats %>% 
+  select(mark, celltype, frac_of_tile_width_with_cis_hBTL_per_cis_hBTL_million) %>% 
+  group_by(mark) %>% 
+  summarize(mean_frac_of_tile_width_with_cis_hBTL_per_cis_hBTL_million = mean(frac_of_tile_width_with_cis_hBTL_per_cis_hBTL_million, na.rm = TRUE)) %>% 
+  mutate(histone_type = case_when(mark %in% c("H3K27ac",  "H3K4me3")  ~ "active",
+                                  mark %in% c("H3K27me3", "H3K9me3")  ~ "repressive",
+                                  mark %in% c("H3K4me1",  "H3K36me3") ~ "other"),
+         .after = mark) %>% 
+  group_by(histone_type) %>% 
+  summarize(mean_mean_frac_of_tile_width_with_cis_hBTL_per_cis_hBTL_million = mean(mean_frac_of_tile_width_with_cis_hBTL_per_cis_hBTL_million, na.rm = TRUE))
+
+# Enrichment of active marks over repressive marks
+2.79/1.09
+
+# Enrichment of active marks over all other marks
+mean(c(2.28, 3.31))/mean(c(0.789, 2.21, 1.12, 1.07))
+```
+
+# 3d Allelic imbalance
+```{r}
+# Read in cis-hBTLs
+consensus.all.spaas.rpkm.bed <- 
+  readRDS("objects/consensus.all.spaas.rpkm.bed.RDS")
+#################################################################################
+# Create index tibble
+cemt_table <- 
+  tibble(cemt = list.files("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/1/output2/H3K4me3/", include.dirs = TRUE) %>% rep(6),
+         individual_number = c(rep("1", 4), rep("2", 4), rep("3", 4), rep("4", 4), rep("5", 4), rep("6", 4), rep("7", 4), rep("8", 4)) %>% rep(6),
+         mark = c(rep("H3K4me3", 8*4), rep("H3K27ac", 8*4), rep("H3K4me1", 8*4), rep("H3K9me3", 8*4), rep("H3K27me3", 8*4), rep("H3K36me3", 8*4)),
+         celltype = rep(c("BC", "LP", "LC", "SC"), 192/4))
+
+# Get available files
+available_files <- 
+  list.files("ase/output") %>% 
+  str_subset(".tbi$", negate = TRUE) %>% 
+  as_tibble() %>% 
+  separate_wider_delim(cols = value, delim = "_",
+                       names = c("mark", "celltype", "toss1", "individual_number", "toss2", "toss3", "toss4")) %>% 
+  select(individual_number, mark, celltype) %>% 
+  mutate(key = str_c(individual_number, mark, celltype, sep = "_"))
+
+cemt_table_avail <- 
+  cemt_table %>% 
+  mutate(key = str_c(individual_number, mark, celltype, sep = "_")) %>% 
+  filter(key %in% available_files$key) %>% 
+  select(-key)
+
+# Loop for POSITIVE cis-hBTLs
+# Currently, this can't be run because some files are missing in folder ./ase/output
+# Must be run with a subsetted cemt_table_avail tibble as in the jobs
+
+# Modules folder path
+modules_path <- "/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules"
+
+# Calculate all ASE depths
+ase_depths_all <- 
+  mclapply(seq_along(cemt_table_avail$cemt), function(i) {
+    
+    # Import ChIP-seq treatment vcf file
+    ase_treatment_vcf <- 
+      readVcfAsVRanges(str_c(modules_path, "/notebook/alignment_analysis/ase/output/", cemt_table_avail$mark[i], "_", cemt_table_avail$celltype[i], "_", "Individual", "_", cemt_table_avail$individual_number[i], "_treatment_cis_hbtls.vcf.gz")) %>%
+      as.data.frame() %>%
+      select(-width, -strand) %>%
+      makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38)) %>%
+      keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+    
+    # Scan VCF for heterozygotic variant calls and keep only cis-hBTLs at heterozygotic positions for that individual
+    # These are the positions that need to be tested for the particular individual-modality
+    ase_het_positions <-
+      join_overlap_intersect(consensus.all.spaas.rpkm.bed %>% 
+                               plyranges::filter(mark == cemt_table_avail$mark[i], celltype == cemt_table_avail$celltype[i], spaa == TRUE) %>% 
+                               keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse"),
+                             readVcfAsVRanges(str_c(modules_path, "/1/output2/", cemt_table_avail$mark[i], "/", cemt_table_avail$cemt[i], "/wgs/", cemt_table_avail$cemt[i], ".recal_hard_filtered_phased_snvs.vcf.gz")) %>%
+                               as.data.frame() %>%
+                               select(-width, -strand) %>%
+                               makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38)) %>%
+                               keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse") %>% 
+                               plyranges::filter(AF == 0.5)) %>% 
+      plyranges::select(-everything())
+    
+    # Subset the ChIP-seq treatment VCF with proper heterozygotic, modality-relevant positions
+    # And select only the positions with some evidence of heterozygotic alignment
+    ase_treatment_vcf_subsetted <-
+      ase_treatment_vcf %>% 
+      join_overlap_intersect(ase_het_positions) %>% 
+      plyranges::filter(refDepth != 0 & altDepth != 0)
+    
+    # Pull out the vectors of depths where ref or alt != 0
+    tibble(mark = cemt_table_avail$mark[i],
+           celltype = cemt_table_avail$celltype[i],
+           individual = cemt_table_avail$individual_number[i],
+           position_id = seq_along(ase_treatment_vcf_subsetted$refDepth),
+           ref_depth_all = ase_treatment_vcf_subsetted$refDepth,
+           alt_depth_all = ase_treatment_vcf_subsetted$altDepth)
+    
+  }, mc.cores = detectCores()) %>% do.call("bind_rows", .)
+
+# Prep
+ase_depths_all_prepped <-
+  ase_depths_all %>% 
+  mutate(mark = mark %>% factor(vector_marks),
+         celltype = celltype %>% factor(vector_celltypes)) %>% 
+  pivot_longer(c(ref_depth_all, alt_depth_all), names_to = "allele_type", values_to = "depth") %>% 
+  mutate(allele_type = case_when(allele_type == "ref_depth_all" ~ "non-*cis*-hBTL",
+                                 allele_type == "alt_depth_all" ~ "*cis*-hBTL") %>% factor(c("non-*cis*-hBTL", "*cis*-hBTL")))
+
+# Calculate significances
+ase_depths_all_prepped_signifs <- 
+  lapply(vector_marks, function(current_mark) {
+    
+    # Perform t-test on paired depths
+    t.test(x = ase_depths_all_prepped %>% filter(mark == current_mark, allele_type == "non-*cis*-hBTL") %>% pull(depth),
+           y = ase_depths_all_prepped %>% filter(mark == current_mark, allele_type == "*cis*-hBTL")     %>% pull(depth),
+           paired = TRUE,
+           alternative = "less") %>% 
+      broom::tidy() %>% 
+      mutate(mark = current_mark %>% factor(vector_marks), .before = 1)
+    
+  }) %>% do.call("bind_rows", .)
+
+# Test
+ase_depths_all_prepped_grouped <-
+  ase_depths_all_prepped %>% 
+  group_by(mark, celltype, individual, allele_type) %>% 
+  summarize(mean_depth = mean(depth)) %>% 
+  ungroup()
+
+# Calculate significances
+ase_depths_all_prepped_grouped_signifs <- 
+  lapply(vector_marks, function(current_mark) {
+    
+    # Perform t-test on paired depths
+    t.test(x = ase_depths_all_prepped_grouped %>% filter(mark == current_mark, allele_type == "non-*cis*-hBTL") %>% pull(mean_depth),
+           y = ase_depths_all_prepped_grouped %>% filter(mark == current_mark, allele_type == "*cis*-hBTL")     %>% pull(mean_depth),
+           paired = TRUE,
+           alternative = "less") %>% 
+      broom::tidy() %>% 
+      mutate(mark = current_mark %>% factor(vector_marks), .before = 1)
+    
+  }) %>% do.call("bind_rows", .) %>% 
+  filter(mark %in% vector_marks_fig2)
+
+# Plot
+# Main marks
+ase_depths_all_prepped %>% 
+  filter(mark %in% vector_marks_fig2) %>% 
+  ggplot(aes(x = mark, y = log2(depth), color = allele_type)) +
+  geom_boxplot() +
+  ggsignif::geom_signif(y_position = rep(7.25, times = length(vector_marks_fig2)),
+                        xmin = 1:length(ase_depths_all_prepped_grouped_signifs$conf.high) - 0.2,
+                        xmax = 1:length(ase_depths_all_prepped_grouped_signifs$conf.high) + 0.2,
+                        annotation = ase_depths_all_prepped_grouped_signifs$p.value %>% gtools::stars.pval() %>% str_replace(" ", "NS."),
+                        tip_length = 0.006,
+                        color = "black") +
+  scale_y_continuous(limits = c(0, 7.5)) +
+  scale_color_manual(values = c("non-*cis*-hBTL" = "gray60", "*cis*-hBTL" = "gray20")) +
+  labs(x = element_blank(),
+       y = expression(paste("log2(allele count) at het. ", italic("cis"), "-hBTLs")),
+       color = "allele type") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1),
+        legend.text = ggtext::element_markdown(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank())
+# Plot for paper
+ggsave("plots/paper_fig.3d_boxplot_ase_mean_allele_counts_v7.png",
+       units  = "in",
+       dpi = 600,
+       width  = 5.00 * 0.775,
+       height = 5.00 * 0.775)
+# # Plot for PowerPoint
+# ggsave("plots/boxplot_ase_mean_allele_counts_v7_powerpoint.png",
+#        units  = "in",
+#        dpi = 600,
+#        width  = 6.00 * 0.775,
+#        height = 5.00 * 0.775)
+
+# Remaining 2.0
+# Calculate significances
+ase_depths_all_prepped_grouped_signifs_rem <- 
+  lapply(vector_marks, function(current_mark) {
+    
+    # Perform t-test on paired depths
+    t.test(x = ase_depths_all_prepped_grouped %>% filter(mark == current_mark, allele_type == "non-*cis*-hBTL") %>% pull(mean_depth),
+           y = ase_depths_all_prepped_grouped %>% filter(mark == current_mark, allele_type == "*cis*-hBTL")     %>% pull(mean_depth),
+           paired = TRUE,
+           alternative = "less") %>% 
+      broom::tidy() %>% 
+      mutate(mark = current_mark %>% factor(vector_marks), .before = 1)
+    
+  }) %>% do.call("bind_rows", .) %>% 
+  filter(mark %in% vector_marks_remaining)
+
+# Main marks
+ase_depths_all_prepped %>% 
+  filter(mark %in% vector_marks_remaining) %>% 
+  ggplot(aes(x = mark, y = log2(depth), color = allele_type)) +
+  geom_boxplot() +
+  ggsignif::geom_signif(y_position = rep(7.25, times = length(vector_marks_remaining)),
+                        xmin = 1:length(ase_depths_all_prepped_grouped_signifs_rem$conf.high) - 0.2,
+                        xmax = 1:length(ase_depths_all_prepped_grouped_signifs_rem$conf.high) + 0.2,
+                        annotation = ase_depths_all_prepped_grouped_signifs_rem$p.value %>% gtools::stars.pval() %>% str_replace(" ", "NS."),
+                        tip_length = 0.006,
+                        color = "black") +
+  scale_y_continuous(limits = c(0, 7.5)) +
+  scale_color_manual(values = c("non-*cis*-hBTL" = "gray60", "*cis*-hBTL" = "gray20")) +
+  labs(x = element_blank(),
+       y = expression(paste("log2(allele count) at het. ", italic("cis"), "-hBTLs")),
+       color = "allele type") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1),
+        legend.text = ggtext::element_markdown(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank())
+# Plot for paper
+ggsave("plots/paper_fig.3d_remaining_boxplot_ase_mean_allele_counts_v7.png",
+       units  = "in",
+       dpi = 600,
+       width  = 4.00 * 0.775,
+       height = 5.00 * 0.775)
+
+# Calculations for paper
+# Means for each group
+ase_depths_all_prepped_mean_conditional_depths <- 
+  ase_depths_all_prepped %>% 
+  group_by(mark, allele_type) %>% 
+  summarize(mean_depth = mean(depth))
+```
+
+# 3e GTEx enrichment
+```{r}
+# Combine fisher tests from jobs
+# Only need to do this once
+# gtex_fisher_tests <- bind_rows(gtex_fisher_tests1, gtex_fisher_tests2, gtex_fisher_tests3)
+# Read in data
+gtex_fisher_tests <- 
+  read_csv("data/gtex_fisher_tests_backup_2023-07-27.csv", progress = FALSE, show_col_types = FALSE)
+
+# # Plot Odds Ratios of enrichment between cis-hBTL sets and GTEx tissue eQTL sets
+# # Only keep histone modifications
+# # Main marks
+# gtex_fisher_tests %>% 
+#   filter(fisher_test_type %in% vector_marks_fig2) %>% 
+#   mutate(fisher_test_type = fisher_test_type %>% factor(vector_marks),
+#          gtex_tissue = gtex_tissue %>% str_replace_all("_", " ")) %>%
+#   ggplot(aes(x = fisher_test_type, y = estimate)) +
+#   geom_hline(yintercept = 1, linetype = "dotted", color = "black") +
+#   geom_boxplot() +
+#   geom_jitter(aes(color = gtex_tissue)) +
+#   theme_bw() +
+#   theme(axis.text.x.bottom = element_text(angle = 30, vjust = 1, hjust = 1)) +
+#   labs(x = element_blank(),
+#        y = "cis-hBTL × GTEx eQTL odds ratio",
+#        color = "GTEx tissue")
+# ggsave("plots/paper_fig.3e_dotplot_gtex_fisher_exacts_odds_ratio_v6.png",
+#        units = "in",
+#        dpi = 600,
+#        width  = 6.50 * 0.8,
+#        height = 5.00 * 0.8)
+
+# Final version
+gtex_fisher_tests %>% 
+  filter(fisher_test_type %in% vector_marks_fig2) %>% 
+  mutate(fisher_test_type = fisher_test_type %>% factor(vector_marks),
+         gtex_tissue = gtex_tissue %>% str_replace_all("_", " "),
+         fisher_test_significance = ifelse(p.value < 0.05, "True", "False") %>% factor(c("True", "False"))) %>%
+  ggplot(aes(x = fisher_test_type, y = estimate)) +
+  geom_hline(yintercept = 1, linetype = "dotted", color = "black") +
+  geom_boxplot() +
+  geom_jitter(aes(fill = gtex_tissue, color = fisher_test_significance), pch = 21, size = 2.25) +
+  scale_color_manual(values = c("True" = "black", "False" = "red")) +
+  scale_y_continuous(limits = c(0, 3), n.breaks = 7) +
+  theme_bw() +
+  theme(axis.text.x.bottom = element_text(angle = 30, vjust = 1, hjust = 1),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = element_blank(),
+       y = expression(paste(italic("cis"), "-hBTL × GTEx eQTL odds ratio")),
+       fill = "GTEx tissue",
+       color = expression(paste("Fisher's exact test ", italic("p"), " < 0.05")))
+# For plot
+ggsave("plots/paper_fig.3e_dotplot_gtex_fisher_exacts_odds_ratio_v8_for_plot.png",
+       units = "in",
+       dpi = 600,
+       width  = 6.75 * 0.78,
+       height = 5.00 * 0.78)
+# For legend
+ggsave("plots/paper_fig.3e_dotplot_gtex_fisher_exacts_odds_ratio_v8_for_legend.png",
+       units = "in",
+       dpi = 600,
+       width  = 6.75 * 0.99,
+       height = 5.00 * 0.99)
+
+# v2
+gtex_fisher_tests %>% 
+  filter(fisher_test_type %in% vector_marks_remaining) %>% 
+  mutate(fisher_test_type = fisher_test_type %>% factor(vector_marks),
+         gtex_tissue = gtex_tissue %>% str_replace_all("_", " "),
+         fisher_test_significance = ifelse(p.value < 0.05, "True", "False") %>% factor(c("True", "False"))) %>%
+  ggplot(aes(x = fisher_test_type, y = estimate)) +
+  geom_hline(yintercept = 1, linetype = "dotted", color = "black") +
+  geom_boxplot() +
+  geom_jitter(aes(fill = gtex_tissue, color = fisher_test_significance), pch = 21, size = 2.25) +
+  scale_color_manual(values = c("True" = "black", "False" = "red")) +
+  scale_y_continuous(limits = c(0, 3), n.breaks = 7) +
+  theme_bw() +
+  theme(axis.text.x.bottom = element_text(angle = 30, vjust = 1, hjust = 1),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = element_blank(),
+       y = expression(paste(italic("cis"), "-hBTL × GTEx eQTL odds ratio")),
+       fill = "GTEx tissue",
+       color = expression(paste("Fisher's exact test ", italic("p"), " < 0.05")))
+# For plot
+ggsave("plots/paper_fig.3e_remaining_dotplot_gtex_fisher_exacts_odds_ratio_v8_for_plot.png",
+       units = "in",
+       dpi = 600,
+       width  = 5.50 * 0.78,
+       height = 5.00 * 0.78)
+# For legend
+ggsave("plots/paper_fig.3e_remaining_dotplot_gtex_fisher_exacts_odds_ratio_v8_for_legend.png",
+       units = "in",
+       dpi = 600,
+       width  = 6.75 * 0.99,
+       height = 5.00 * 0.99)
+
+
+# gtex_fisher_tests %>% 
+#   filter(fisher_test_type %in% vector_marks_fig2) %>% 
+#   mutate(fisher_test_type = fisher_test_type %>% factor(vector_marks),
+#          gtex_tissue = gtex_tissue %>% str_replace_all("_", " ")) %>%
+#   ggplot(aes(x = fisher_test_type, y = estimate)) +
+#   geom_hline(yintercept = 1, linetype = "dotted", color = "black") +
+#   geom_boxplot() +
+#   geom_jitter(aes(color = gtex_tissue)) +
+#   theme_bw() +
+#   theme(axis.text.x.bottom = element_text(angle = 30, vjust = 1, hjust = 1)) +
+#   labs(x = element_blank(),
+#        y = "cis-hBTL × GTEx eQTL odds ratio",
+#        color = "GTEx tissue")
+# ggsave("plots/paper_fig.3e_dotplot_gtex_fisher_exacts_odds_ratio_v6.png",
+#        units = "in",
+#        dpi = 600,
+#        width  = 6.50 * 0.8,
+#        height = 5.00 * 0.8)
+# # Remaining
+# gtex_fisher_tests %>% 
+#   filter(fisher_test_type %in% vector_marks_remaining) %>% 
+#   mutate(fisher_test_type = fisher_test_type %>% factor(vector_marks),
+#          gtex_tissue = gtex_tissue %>% str_replace_all("_", " ")) %>%
+#   ggplot(aes(x = fisher_test_type, y = estimate)) +
+#   geom_hline(yintercept = 1, linetype = "dotted", color = "black") +
+#   geom_boxplot() +
+#   geom_jitter(aes(color = gtex_tissue)) +
+#   theme_bw() +
+#   theme(axis.text.x.bottom = element_text(angle = 30, vjust = 1, hjust = 1)) +
+#   labs(x = element_blank(),
+#        y = "odds ratio of cis-hBTLs × GTEx eQTLs",
+#        color = "GTEx tissue")
+# ggsave("plots/dotplot_gtex_fisher_exacts_odds_ratio_v6_remaining.png",
+#        units = "in",
+#        dpi = 600,
+#        width  = 5.00 * 0.8,
+#        height = 5.00 * 0.8)
+```
+
+# Table 2
+```{r}
+# Plot xlsx summary of top hits
+readxl::read_excel("data/cis-hBTL top hits simplified.xlsx") %>% 
+  gt() %>% 
+  tab_style(style = cell_text(weight = "bold"),
+            locations = cells_column_labels()) %>% 
+  gtsave("plots/cis_hBTL_top_hits_anno_table.html")
+
+# Save png
+webshot::webshot(url     = "plots/cis_hBTL_top_hits_anno_table.html", 
+                 file    = "plots/cis_hBTL_top_hits_anno_table.png", 
+                 vwidth  = 1250, 
+                 vheight = 400, 
+                 zoom    = 10)
+```
+
+# Figure S (cis-hBTL by-mark UpSets)
+```{r}
+# All
+png(filename = str_c("plots/", "upset_spaas_all_by_mark_celltype_v2", ".png"),
+    width = 12, 
+    height = 10, 
+    units = "in", 
+    res = 300,
+    pointsize = 16,
+    type = "cairo")
+upset(fromList(list(
+  H3K27ac_LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27ac", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K27ac_LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27ac", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K27ac_BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27ac", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K27ac_SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27ac", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K4me1_LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me1", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K4me1_LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me1", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K4me1_BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me1", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K4me1_SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me1", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K4me3_LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me3", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K4me3_LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me3", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K4me3_BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me3", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K4me3_SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me3", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K36me3_LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K36me3", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_")) %>% `$`(index),
+  H3K36me3_LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K36me3", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_")) %>% `$`(index),
+  H3K36me3_BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K36me3", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_")) %>% `$`(index),
+  H3K36me3_SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K36me3", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_")) %>% `$`(index),
+  H3K27me3_LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27me3", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_")) %>% `$`(index),
+  H3K27me3_LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27me3", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_")) %>% `$`(index),
+  H3K27me3_BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27me3", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_")) %>% `$`(index),
+  H3K27me3_SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27me3", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_")) %>% `$`(index),
+  H3K9me3_LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K9me3", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K9me3_LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K9me3", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K9me3_BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K9me3", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  H3K9me3_SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K9me3", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index))), 
+  nsets = length(vector_modalities))
+dev.off()
+
+# Mark-specific
+# H3K27ac
+png(filename = str_c("plots/", "upset_spaas_", "H3K27ac", ".png"),
+    width = 12, 
+    height = 6, 
+    units = "in", 
+    res = 600,
+    pointsize = 16,
+    type = "cairo")
+upset(fromList(list(
+  LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27ac", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27ac", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27ac", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27ac", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index))), 
+  sets = rev(vector_celltypes),
+  nsets = length(vector_celltypes), 
+  keep.order = TRUE)
+dev.off()
+
+# H3K4me1
+png(filename = str_c("plots/", "upset_spaas_", "H3K4me1", ".png"),
+    width = 12, 
+    height = 6, 
+    units = "in", 
+    res = 600,
+    pointsize = 16,
+    type = "cairo")
+upset(fromList(list(
+  LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me1", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me1", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me1", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me1", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index))), 
+  sets = rev(vector_celltypes),
+  nsets = length(vector_celltypes), 
+  keep.order = TRUE)
+dev.off()
+
+# H3K4me3
+png(filename = str_c("plots/", "upset_spaas_", "H3K4me3", ".png"),
+    width = 12, 
+    height = 6, 
+    units = "in", 
+    res = 600,
+    pointsize = 16,
+    type = "cairo")
+upset(fromList(list(
+  LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me3", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me3", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me3", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K4me3", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index))), 
+  sets = rev(vector_celltypes),
+  nsets = length(vector_celltypes), 
+  keep.order = TRUE)
+dev.off()
+
+# H3K36me3
+png(filename = str_c("plots/", "upset_spaas_", "H3K36me3", ".png"),
+    width = 12, 
+    height = 6, 
+    units = "in", 
+    res = 600,
+    pointsize = 16,
+    type = "cairo")
+upset(fromList(list(
+  LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K36me3", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K36me3", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K36me3", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K36me3", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index))), 
+  sets = rev(vector_celltypes),
+  nsets = length(vector_celltypes), 
+  keep.order = TRUE)
+dev.off()
+
+# H3K27me3
+png(filename = str_c("plots/", "upset_spaas_", "H3K27me3", ".png"),
+    width = 12, 
+    height = 6, 
+    units = "in", 
+    res = 600,
+    pointsize = 16,
+    type = "cairo")
+upset(fromList(list(
+  LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27me3", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27me3", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27me3", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K27me3", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index))), 
+  sets = rev(vector_celltypes),
+  nsets = length(vector_celltypes), 
+  keep.order = TRUE)
+dev.off()
+
+# H3K9me3
+png(filename = str_c("plots/", "upset_spaas_", "H3K9me3", ".png"),
+    width = 12, 
+    height = 6, 
+    units = "in", 
+    res = 600,
+    pointsize = 16,
+    type = "cairo")
+upset(fromList(list(
+  LC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K9me3", celltype == "LC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  LP = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K9me3", celltype == "LP") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  BC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K9me3", celltype == "BC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index),
+  SC = consensus.all.spaas.rpkm.bed %>% plyranges::filter(mark == "H3K9me3", celltype == "SC") %>% plyranges::mutate(index = str_c(as.character(seqnames(.)), as.character(start(.)), sep = "_"))   %>% `$`(index))), 
+  sets = rev(vector_celltypes),
+  nsets = length(vector_celltypes), 
+  keep.order = TRUE)
+dev.off()
+```
+
+# Plotting just summary data
+# 3f atSNP using previous 
+```{r}
+# Read in data saved previously
+tfbs_summary_atsnp <-
+  read_csv("data/by_mark_fisher_tests.csv", show_col_types = FALSE, progress = FALSE) %>% 
+  mutate(mark = mark %>% factor(vector_marks))
+
+tfbs_summary_pbsnp <- 
+  tibble(mark = 
+           c("pbSNPs all", 
+             "pbSNPs LP"),
+         estimate = 
+           c(1.05758, # pbSNPs all
+             2.96000  # pbSNPs LPs
+           ),
+         p.value = 
+           c(3.55e-001, # pbSNPs all
+             1.86e-002  # pbSNPs LPs
+           ),
+         conf.low = 
+           c(0.94, # pbSNPs all
+             1.07  # pbSNPs LPs
+           ),
+         conf.high = 
+           c(1.19, # pbSNPs all
+             6.56  # pbSNPs LPs
+           ),
+         method = 
+           c("Fisher's Exact Test for Count Data",
+             "Fisher's Exact Test for Count Data"
+           ),
+         alternative = 
+           c("two.sided",
+             "two.sided"
+           ))
+
+# Plot atSNP summary 
+# Main marks
+tfbs_summary_atsnp_main_marks <- 
+  tfbs_summary_atsnp %>% 
+  filter(mark %in% vector_marks_fig2)
+
+tfbs_summary_atsnp_main_marks %>% 
+  ggplot(aes(x = mark, y = estimate)) +
+  geom_col(fill = "light gray", color = "black") +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), color = "black", width = 0.5) +
+  ggsignif::geom_signif(
+    y_position = tfbs_summary_atsnp_main_marks$conf.high, 
+    xmin = 1:length(tfbs_summary_atsnp_main_marks$conf.high) - 0.2, 
+    xmax = 1:length(tfbs_summary_atsnp_main_marks$conf.high) + 0.2, 
+    annotation = tfbs_summary_atsnp_main_marks$p.value %>% gtools::stars.pval() %>% str_replace(" ", "NS."), 
+    tip_length = 0) +
+  geom_hline(yintercept = 1, linetype = "dotted", color = "black") +
+  ylim(c(0, 2)) +
+  labs(x = element_blank(),
+       y = "TF motif disruption odds ratio") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank())
+# Plot for paper
+ggsave("plots/paper_fig.3f_barplot_tfbs_summary_atsnp_v5.png",
+       units = "in",
+       dpi = 600,
+       width =  4 * 0.65,
+       height = 5 * 0.65)
+# Plot for PowerPoint
+ggsave("plots/barplot_tfbs_summary_atsnp_v5_powerpoint.png",
+       units = "in",
+       dpi = 600,
+       width =  6 * 0.65,
+       height = 5 * 0.65)
+
+# Remaining
+# Main marks
+tfbs_summary_atsnp_rem_marks <- 
+  tfbs_summary_atsnp %>% 
+  filter(mark %in% vector_marks_remaining)
+
+tfbs_summary_atsnp_rem_marks %>% 
+  ggplot(aes(x = mark, y = estimate)) +
+  geom_col(fill = "light gray", color = "black") +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), color = "black", width = 0.5) +
+  ggsignif::geom_signif(
+    y_position = tfbs_summary_atsnp_rem_marks$conf.high, 
+    xmin = 1:length(tfbs_summary_atsnp_rem_marks$conf.high) - 0.2, 
+    xmax = 1:length(tfbs_summary_atsnp_rem_marks$conf.high) + 0.2, 
+    annotation = tfbs_summary_atsnp_rem_marks$p.value %>% gtools::stars.pval() %>% str_replace(" ", "NS."), 
+    tip_length = 0) +
+  geom_hline(yintercept = 1, linetype = "dotted", color = "black") +
+  ylim(c(0, 2)) +
+  labs(x = element_blank(),
+       y = "TF motif disruption odds ratio") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank())
+# Plot for paper
+ggsave("plots/paper_fig.3f_remaining_barplot_tfbs_summary_atsnp_v5.png",
+       units = "in",
+       dpi = 600,
+       width =  3 * 0.65,
+       height = 5 * 0.65)
+```
+

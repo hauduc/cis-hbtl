@@ -1,0 +1,276 @@
+---
+title: "Visualization v2"
+output: html_notebook
+---
+```{r}
+# Load constants
+source("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/source/setup.R")
+```
+
+# GViz variables
+```{r}
+# Data
+consensus.all.spaas.rpkm.bed <- readRDS("objects/consensus.all.spaas.rpkm.bed.RDS")
+list_peak_wasp               <- readRDS("objects/list_peak_wasp.RDS")
+list_variant_calls           <- readRDS("objects/list_variant_calls.RDS")
+cl_peak_wasp                 <- readRDS("objects/cl_peak_wasp.RDS")
+cl_pipeline_variant_calls    <- readRDS("objects/cl_pipeline_variant_calls.RDS")
+
+# Gviz constants
+gviz_genome                  <- readRDS("objects/gviz_genome.RDS")
+gviz_cyto_bands              <- readRDS("objects/gviz_cyto_bands.RDS")
+gviz_biomart_hg38_genes      <- readRDS("objects/gviz_biomart_hg38_genes.RDS")
+```
+
+# PLOT COHORT + CELL LINES
+```{r}
+gviz_plot_primary_samples_v4 <- function(rsID, cohort_modality, cell_line_modality, coord_left, coord_right, highlight_radius) {
+  # Set visualization range based on provided arguments
+  # Middle point
+  my_selection_point <- consensus.all.spaas.rpkm.bed %>% plyranges::filter(rs == rsID) %>% reduce_ranges()
+  
+  # Plotting window
+  my_selection_range <- 
+    as_granges(data.frame(seqnames = my_selection_point %>% seqnames() %>% as.character(),
+                          start    = my_selection_point %>% start()    %>% `+`(coord_left),
+                          end      = my_selection_point %>% start()    %>% `+`(coord_right),
+                          strand   = my_selection_point %>% strand()   %>% as.character()))
+  
+  # Gviz plotTracks main command
+  plotTracks(chromosome = my_selection_point %>% seqnames() %>% as.character(),
+             from =       my_selection_point %>% start()    %>% `+`(coord_left),
+             to =         my_selection_point %>% start()    %>% `+`(coord_right),
+             #transcriptAnnotation = "symbol",
+             #stacking = "squish",
+             
+             ##################################################################################################################################################
+             # Data track list to plot with plotTracks
+             trackList = list(
+               # Ideogram
+               IdeogramTrack(chromosome = my_selection_point %>% seqnames() %>% as.character(),
+                             genome = gviz_genome,
+                             bands = gviz_cyto_bands),
+               # Genome Axis
+               GenomeAxisTrack(),
+               ################################################################################################################################################
+               ### Sample data tracks overlaying histone mod peaks with variant calls
+               ### Highlight all sample datatracks as well with the correct highlight width
+               HighlightTrack(chromosome = my_selection_point %>% seqnames() %>% as.character(),
+                              start = my_selection_point %>% start() %>% `-`(highlight_radius),
+                              width = (highlight_radius * 2) + 1,
+                              inBackground = FALSE,
+                              col = "red",
+                              fill = NA,
+                              trackList = list(
+                                ###############################################################################################################################
+                                ### Begin including individual-specific tracks
+                                ### Individual 7
+                                OverlayTrack(trackList = list(AnnotationTrack(list_peak_wasp[[cohort_modality]][[7]],
+                                                                              name = "Ind. 7",
+                                                                              genome = gviz_genome,
+                                                                              col = NA),
+                                                              AnnotationTrack(list_variant_calls[[7]] %>% join_overlap_inner(my_selection_range),
+                                                                              name = "Ind. 7",
+                                                                              genome = gviz_genome,
+                                                                              col = "black",
+                                                                              lwd = 3))),
+                                ### Individual 1
+                                OverlayTrack(trackList = list(AnnotationTrack(list_peak_wasp[[cohort_modality]][[1]],
+                                                                              name = "Ind. 1",
+                                                                              genome = gviz_genome,
+                                                                              col = NA), 
+                                                              AnnotationTrack(list_variant_calls[[1]] %>% join_overlap_inner(my_selection_range),
+                                                                              name = "Ind. 1",
+                                                                              genome = gviz_genome,
+                                                                              col = "black",
+                                                                              lwd = 3))),
+                                ### Individual 2
+                                OverlayTrack(trackList = list(AnnotationTrack(list_peak_wasp[[cohort_modality]][[2]],
+                                                                              name = "Ind. 2",
+                                                                              genome = gviz_genome,
+                                                                              col = NA),
+                                                              AnnotationTrack(list_variant_calls[[2]] %>% join_overlap_inner(my_selection_range),
+                                                                              name = "Ind. 2",
+                                                                              genome = gviz_genome,
+                                                                              col = "black",
+                                                                              lwd = 3))),
+                                ### Individual 3
+                                OverlayTrack(trackList = list(AnnotationTrack(list_peak_wasp[[cohort_modality]][[3]],
+                                                                              name = "Ind. 3",
+                                                                              genome = gviz_genome,
+                                                                              col = NA),
+                                                              AnnotationTrack(list_variant_calls[[3]] %>% join_overlap_inner(my_selection_range),
+                                                                              name = "Ind. 3",
+                                                                              genome = gviz_genome,
+                                                                              col = "black",
+                                                                              lwd = 3))),
+                                ### Individual 4
+                                OverlayTrack(trackList = list(AnnotationTrack(list_peak_wasp[[cohort_modality]][[4]],
+                                                                              name = "Ind. 4",
+                                                                              genome = gviz_genome,
+                                                                              col = NA),
+                                                              AnnotationTrack(list_variant_calls[[4]] %>% join_overlap_inner(my_selection_range),
+                                                                              name = "Ind. 4",
+                                                                              genome = gviz_genome,
+                                                                              col = "black",
+                                                                              lwd = 3))),
+                                ### Individual 5
+                                OverlayTrack(trackList = list(AnnotationTrack(list_peak_wasp[[cohort_modality]][[5]],
+                                                                              name = "Ind. 5",
+                                                                              genome = gviz_genome,
+                                                                              col = NA),
+                                                              AnnotationTrack(list_variant_calls[[5]] %>% join_overlap_inner(my_selection_range),
+                                                                              name = "Ind. 5",
+                                                                              genome = gviz_genome,
+                                                                              col = "black",
+                                                                              lwd = 3))),
+                                ### Individual 6
+                                OverlayTrack(trackList = list(AnnotationTrack(list_peak_wasp[[cohort_modality]][[6]],
+                                                                              name = "Ind. 6",
+                                                                              genome = gviz_genome,
+                                                                              col = NA),
+                                                              AnnotationTrack(list_variant_calls[[6]] %>% join_overlap_inner(my_selection_range),
+                                                                              name = "Ind. 6",
+                                                                              genome = gviz_genome,
+                                                                              col = "black",
+                                                                              lwd = 3))),
+                                ### Individual 8
+                                OverlayTrack(trackList = list(AnnotationTrack(list_peak_wasp[[cohort_modality]][[8]],
+                                                                              name = "Ind. 8",
+                                                                              genome = gviz_genome,
+                                                                              col = NA),
+                                                              AnnotationTrack(list_variant_calls[[8]] %>% join_overlap_inner(my_selection_range),
+                                                                              name = "Ind. 8",
+                                                                              genome = gviz_genome,
+                                                                              col = "black",
+                                                                              lwd = 3)))))))
+  ###############################################################################################################################
+  # End highlighted region
+  ################################################################################################################################################
+}
+
+gviz_plot_cell_lines_v4 <- function(rsID, cohort_modality, cell_line_modality, coord_left, coord_right, highlight_radius) {
+  # Set visualization range based on provided arguments
+  # Middle point
+  my_selection_point <- consensus.all.spaas.rpkm.bed %>% plyranges::filter(rs == rsID) %>% reduce_ranges()
+  
+  # Plotting window
+  my_selection_range <- 
+    as_granges(data.frame(seqnames = my_selection_point %>% seqnames() %>% as.character(),
+                          start    = my_selection_point %>% start()    %>% `+`(coord_left),
+                          end      = my_selection_point %>% start()    %>% `+`(coord_right),
+                          strand   = my_selection_point %>% strand()   %>% as.character()))
+  
+  # Gviz plotTracks main command
+  plotTracks(chromosome = my_selection_point %>% seqnames() %>% as.character(),
+             from =       my_selection_point %>% start()    %>% `+`(coord_left),
+             to =         my_selection_point %>% start()    %>% `+`(coord_right),
+             #transcriptAnnotation = "symbol",
+             #stacking = "squish",
+             
+             ##################################################################################################################################################
+             # Data track list to plot with plotTracks
+             trackList = list(
+               # Ideogram
+               IdeogramTrack(chromosome = my_selection_point %>% seqnames() %>% as.character(),
+                             genome = gviz_genome,
+                             bands = gviz_cyto_bands),
+               # Genome Axis
+               GenomeAxisTrack(),
+               ################################################################################################################################################
+               ### Sample data tracks overlaying histone mod peaks with variant calls
+               ### Highlight all sample datatracks as well with the correct highlight width
+               HighlightTrack(chromosome = my_selection_point %>% seqnames() %>% as.character(),
+                              start = my_selection_point %>% start() %>% `-`(highlight_radius),
+                              width = (highlight_radius * 2) + 1,
+                              inBackground = FALSE,
+                              col = "red",
+                              fill = NA,
+                              trackList = list(
+                                ###############################################################################################################################
+                                ### Begin including individual-specific track
+                                ### 184-hTERT-L9
+                                OverlayTrack(trackList = list(AnnotationTrack(cl_peak_wasp[[cell_line_modality]][["htert_l9"]],
+                                                                              name = "184-L9",
+                                                                              genome = gviz_genome,
+                                                                              col = NA),
+                                                              AnnotationTrack(cl_pipeline_variant_calls[["htert_l9"]] %>% join_overlap_inner(my_selection_range),
+                                                                              name = "184-L9",
+                                                                              genome = gviz_genome,
+                                                                              col = "black",
+                                                                              lwd = 3))),
+                                ### 184-hTERT-L2
+                                OverlayTrack(trackList = list(AnnotationTrack(cl_peak_wasp[[cell_line_modality]][["htert_l2"]],
+                                                                              name = "184-L2",
+                                                                              genome = gviz_genome,
+                                                                              col = NA),
+                                                              AnnotationTrack(cl_pipeline_variant_calls[["htert_l2"]] %>% join_overlap_inner(my_selection_range),
+                                                                              name = "184-L2",
+                                                                              genome = gviz_genome,
+                                                                              col = "black",
+                                                                              lwd = 3))),
+                                ### MCF10A
+                                OverlayTrack(trackList = list(AnnotationTrack(cl_peak_wasp[[cell_line_modality]][["mcf10a"]],
+                                                                              name = "MCF10A",
+                                                                              genome = gviz_genome,
+                                                                              col = NA),
+                                                              AnnotationTrack(cl_pipeline_variant_calls[["mcf10a"]] %>% join_overlap_inner(my_selection_range),
+                                                                              name = "MCF10A",
+                                                                              genome = gviz_genome,
+                                                                              col = "black",
+                                                                              lwd = 3)))))))
+  ###############################################################################################################################
+  # End highlighted region
+  ################################################################################################################################################
+}
+```
+
+# Plot all relevant modalities by looping through all relevant loci, cell types, and histone marks
+```{r}
+# Plot dimensions
+# Primary
+gviz_primary_plot_width    <- 22.5
+gviz_primary_plot_height   <- 6.2 * 0.9
+
+# Cell line
+gviz_cell_line_plot_width  <- 22.5
+gviz_cell_line_plot_height <- 3.2 * 0.9
+
+# Conversion factor
+gviz_plot_conv_factor      <- 0.6
+################################################################################################################################################
+# Plot
+# Loop through all relevant modalities
+# Plot primary samples
+mclapply(vector_celltypes, function(current_celltype) {
+  # Plot
+  png(str_c("plots/paper_fig.4a_cohort_plot_rs75071948_H3K4me3_", current_celltype, "_v5.png"),
+      width  = gviz_primary_plot_width  * gviz_plot_conv_factor,
+      height = gviz_primary_plot_height * gviz_plot_conv_factor,
+      units  = "in",
+      res    = 600)
+  
+  gviz_plot_primary_samples_v4(rsID               = "rs75071948",
+                               cohort_modality    = str_c("H3K4me3_", current_celltype), 
+                               cell_line_modality = NA,
+                               coord_left         = -2000, 
+                               coord_right        = +2000,
+                               highlight_radius   = 50)
+  dev.off()
+}, mc.cores = length(vector_celltypes))
+################################################################################################################################################
+# Plot cell lines
+png(str_c("plots/paper_fig.4a_cohort_plot_rs75071948_H3K4me3_", "cell_lines", "_v5.png"),
+    width  = gviz_cell_line_plot_width  * gviz_plot_conv_factor,
+    height = gviz_cell_line_plot_height * gviz_plot_conv_factor,
+    units  = "in",
+    res    = 600)
+
+gviz_plot_cell_lines_v4(rsID               = "rs75071948",
+                        cohort_modality    = NA, 
+                        cell_line_modality = "H3K4me3",
+                        coord_left         = -2000, 
+                        coord_right        = +2000,
+                        highlight_radius   = 50)
+dev.off()
+```

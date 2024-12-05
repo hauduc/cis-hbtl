@@ -1,0 +1,1448 @@
+---
+title: "Comprehensive cell type peak analysis"
+output: html_notebook
+---
+## Upstream Analysis
+# Set constants
+```{r}
+# Load constants
+source("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/source/setup.R")
+
+# Chrom positions tibble
+ba_chrom_positions <- readRDS("objects/ba_chrom_positions.RDS")
+
+# Initialize ba-specific list
+txdb_grlist_ba <- readRDS("objects/txdb_grlist_ba.RDS")
+
+# Steps 1 & 2:
+# Load ba object
+ba_whole_genome_anno_chr_all <- readRDS("objects/ba_whole_genome_anno_chr_all.RDS")
+
+# Step 3
+ba_whole_genome_anno_chr_all_var_increments_all <- readRDS("objects/ba_whole_genome_anno_chr_all_var_increments_all.RDS")
+ba_whole_genome_anno_chr_all_var_increments_features <- readRDS("objects/ba_whole_genome_anno_chr_all_var_increments_features.RDS")
+
+# Step 4
+ba_whole_genome_anno_chr_all_summarized <- readRDS("objects/ba_whole_genome_anno_chr_all_summarized.RDS")
+```
+
+# ####################################################################################################################################################################################
+# Fig. 2a
+# ####################################################################################################################################################################################
+```{r}
+# Prepare tibble
+ba_whole_genome_anno_chr_all_hist <- 
+  ba_whole_genome_anno_chr_all %>% 
+  mcols() %>% 
+  as_tibble() %>% 
+  filter(if_any(starts_with("bayes_category_"), ~ . != "blacklisted")) %>% 
+  filter((promoter == TRUE) | (enhancer_pellacani == TRUE)) %>% 
+  mutate(enhancer_pellacani_exclusive = 
+           case_when( (enhancer_pellacani == TRUE) & (promoter == TRUE)  ~ FALSE,
+                      (enhancer_pellacani == TRUE) & (promoter == FALSE) ~ TRUE), 
+         .after = enhancer_pellacani) %>% 
+  select(promoter, enhancer_pellacani_exclusive, starts_with("bayes_mean_")) %>% 
+  rename(promoters = promoter, enhancers = enhancer_pellacani_exclusive)
+
+# Pivot longer
+ba_whole_genome_anno_chr_all_hist_long <- 
+  ba_whole_genome_anno_chr_all_hist %>% 
+  lazy_dt() %>% 
+  pivot_longer(cols = c(promoters, enhancers), names_to = "feature", values_to = "feature_is_present") %>% 
+  filter(feature_is_present == TRUE) %>% 
+  select(-feature_is_present) %>% 
+  pivot_longer(cols = starts_with("bayes_mean_"), names_to = "modality", names_prefix = "bayes_mean_", values_to = "bayes_mean_value") %>% 
+  separate(col = modality, into = c("mark", "celltype"), sep = "_") %>% 
+  relocate(c("feature", "mark", "celltype"), .before = 1) %>% 
+  mutate(feature = feature %>% factor(c("promoters", "enhancers")),
+         mark = mark %>% factor(vector_marks),
+         celltype = celltype %>% factor(vector_celltypes)) %>% 
+  as_tibble()
+
+# Get hg38 autosomes length
+const_hg38_autosome_length <- 
+  lapply(const_canonical_autosomes, function(current_autosome) {
+    
+    # Extract each autosome's length
+    BSgenome.Hsapiens.UCSC.hg38 %>% 
+      `[[`(current_autosome) %>% 
+      length()
+    
+  }) %>% unlist() %>% sum()
+
+# Get numbers for paper
+# Summarize data
+ba_whole_genome_anno_chr_all_hist_long_summarized <-
+  ba_whole_genome_anno_chr_all_hist_long %>% 
+  filter(bayes_mean_value != 0) %>% 
+  filter(mark %in% vector_marks_fig2_v2) %>% 
+  mutate(bayes_mean_value_histogram_bin = case_when(bayes_mean_value > 0/8 & bayes_mean_value <= 1/8 ~ "1/8",
+                                                    bayes_mean_value > 1/8 & bayes_mean_value <= 2/8 ~ "2/8",
+                                                    bayes_mean_value > 2/8 & bayes_mean_value <= 3/8 ~ "3/8",
+                                                    bayes_mean_value > 3/8 & bayes_mean_value <= 4/8 ~ "4/8",
+                                                    bayes_mean_value > 4/8 & bayes_mean_value <= 5/8 ~ "5/8",
+                                                    bayes_mean_value > 5/8 & bayes_mean_value <= 6/8 ~ "6/8",
+                                                    bayes_mean_value > 6/8 & bayes_mean_value <= 7/8 ~ "7/8",
+                                                    bayes_mean_value > 7/8 & bayes_mean_value <= 8/8 ~ "8/8")) %>% 
+  group_by(feature, mark, celltype, bayes_mean_value_histogram_bin) %>% 
+  summarize(number_of_50bp_bins = n()) %>% 
+  mutate(genome_coverage_percentage = number_of_50bp_bins * (50/const_hg38_autosome_length) * 100)
+
+# PLOTTING ZONE ##########################################################################################################################################
+
+# # Run a faceted geom_histogram on resulting tibble
+# # Create histogram plot
+# # Change y scale into percentage of genome covered
+# # Version 1 vector_marks_fig2_v2
+# ba_whole_genome_anno_chr_all_hist_long %>% 
+#   filter(bayes_mean_value != 0) %>% 
+#   filter(mark %in% vector_marks_fig2_v2) %>% 
+#   ggplot(aes(x = bayes_mean_value, fill = celltype)) +
+#   geom_histogram(aes(y = after_stat(count)*(50/const_hg38_autosome_length)), bins = 8) +
+#   facet_grid(rows = vars(feature), cols = vars(mark)) +
+#   scale_x_continuous(labels = function(x) ifelse(x == 0, "0", ifelse(x == 1, "1", ifelse(x == 0.25, "", ifelse(x == 0.75, "", x))))) +
+#   scale_y_continuous(labels = scales::percent) +
+#   scale_fill_manual(values = vector_celltype_colors) +
+#   theme_bw() +
+#   theme(aspect.ratio = 1/1) +
+#   labs(x = "histone 𝜃 estimate",
+#        y = "genomic coverage",
+#        fill = "cell type")
+# ggsave(str_c("plots/axel_ihec_figure_panel_1_faceted_promoters_enhancers_histogram_all_marks", ".png"),
+#        units = "in",
+#        dpi = 600,
+#        width  = 8.00 * 1.0,
+#        height = 3.50 * 1.0)
+# 
+# # Run a faceted geom_histogram on resulting tibble
+# # Create histogram plot
+# # Change y scale into percentage of genome covered
+# # Version 1 vector_marks_fig2_v2
+# # Nested
+# ba_whole_genome_anno_chr_all_hist_long %>% 
+#   filter(bayes_mean_value != 0) %>% 
+#   filter(mark %in% vector_marks_fig2_v2) %>% 
+#   ggplot(aes(x = bayes_mean_value, fill = celltype)) +
+#   geom_histogram(aes(y = after_stat(count)*(50/const_hg38_autosome_length)), bins = 8) +
+#   ggh4x::facet_nested(rows = vars(feature, celltype), cols = vars(mark)) +
+#   scale_x_continuous(labels = function(x) ifelse(x == 0, "0", ifelse(x == 1, "1", ifelse(x == 0.25, "", ifelse(x == 0.75, "", x))))) +
+#   scale_y_continuous(labels = scales::percent) +
+#   scale_fill_manual(values = vector_celltype_colors) +
+#   theme_bw() +
+#   theme(axis.text.y = element_text(size = 5)) +
+#   labs(x = "histone 𝜃 estimate",
+#        y = "genomic coverage",
+#        fill = "cell type")
+# ggsave(str_c("plots/axel_ihec_figure_panel_1_faceted_promoters_enhancers_histogram_all_marks_nested", ".png"),
+#        units = "in",
+#        dpi = 600,
+#        width  = 7.0 * 0.95,
+#        height = 4.5 * 0.95)
+
+# # Fig. 2a - IHEC Panel Version 2 - Boxplot
+# ba_whole_genome_anno_chr_all_hist_long %>% 
+#   filter(bayes_mean_value != 0) %>% 
+#   filter(mark %in% vector_marks_fig2_v2) %>% 
+#   ggplot(aes(x = mark, y = bayes_mean_value, fill = celltype)) +
+#   geom_boxplot(outlier.shape = NA) +
+#   facet_grid(cols = vars(feature)) +
+#   scale_color_manual(values = "black") +
+#   scale_fill_manual(values = vector_celltype_colors_light) +
+#   theme_bw() +
+#   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+#   labs(x = element_blank(),
+#        y = "histone 𝜃 estimate",
+#        fill = "cell type")
+# ggsave(str_c("plots/axel_ihec_figure_panel_1_faceted_promoters_enhancers_histogram_all_marks_boxplot", ".png"),
+#        units = "in",
+#        dpi = 600,
+#        width  = 10  * 0.8,
+#        height = 4.5 * 0.8)
+
+# # Version 3 - Violin no celltype
+# ba_whole_genome_anno_chr_all_hist_long %>% 
+#   filter(bayes_mean_value != 0) %>% 
+#   filter(mark %in% vector_marks_fig2_v2) %>% 
+#   ggplot(aes(x = mark, y = bayes_mean_value)) +
+#   geom_violin() +
+#   facet_grid(cols = vars(feature)) +
+#   theme_bw() +
+#   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+#   labs(x = element_blank(),
+#        y = "histone 𝜃 estimate",
+#        fill = "cell type")
+# ggsave(str_c("plots/axel_ihec_figure_panel_1_faceted_promoters_enhancers_histogram_all_marks_violin", ".png"),
+#        units = "in",
+#        dpi = 600,
+#        width  = 6.0 * 0.9,
+#        height = 4.0 * 0.9)
+
+# Plotting
+# Stat tests
+# Perform all tests
+ba_tests <- 
+  lapply(vector_marks, function(current_mark) {
+    lapply(vector_celltypes, function(current_celltype) {
+      
+      # Get current bayes values of promoters vs enhancers
+      current_bayes_vals_1 <- ba_whole_genome_anno_chr_all_hist_long %>% filter(bayes_mean_value != 0, mark == current_mark, celltype == current_celltype, feature == "promoters") %>% pull(bayes_mean_value)
+      current_bayes_vals_2 <- ba_whole_genome_anno_chr_all_hist_long %>% filter(bayes_mean_value != 0, mark == current_mark, celltype == current_celltype, feature == "enhancers") %>% pull(bayes_mean_value)
+      
+      # Perform test
+      # Rather than a null hypothesis that the difference between the 
+      t.test(x = current_bayes_vals_1 - (1/8),
+             y = current_bayes_vals_2, 
+             alternative = "greater") %>% 
+        broom::tidy() %>% 
+        mutate(mark = current_mark,
+               celltype = current_celltype,
+               .before = 1)
+      
+    }) %>% do.call("bind_rows", .)
+  }) %>% do.call("bind_rows", .)
+
+# Grouped boxplots v2 FOR PAPER
+ba_whole_genome_anno_chr_all_hist_long %>% 
+  filter(bayes_mean_value != 0) %>% 
+  filter(mark %in% vector_marks_fig2) %>% 
+  ggplot(aes(x = feature, y = bayes_mean_value, fill = celltype)) +
+  geom_boxplot(outlier.shape = NA) +
+  facet_wrap(facets = vars(mark), nrow = 2, strip.position = "top") +
+  scale_x_discrete(expand = c(0.23, 0.23)) +
+  scale_y_continuous(labels = function(x) {ifelse(x == 0, "", x)},
+                     breaks = seq(from = 1/4, to = 1, by = 1/4), 
+                     minor_breaks = seq(from = 1/8, to = 1, by = 1/8), 
+                     limits = c(1/16, 1.275)) +
+  scale_color_manual(values = "black") +
+  scale_fill_manual(values = vector_celltype_colors_light) +
+  ggsignif::geom_signif(data = data.frame(seq_number_signifs_per_facet = 1:4), 
+                        aes(y_position  = c(1.05, 1.10, 1.15, 1.20) %>% rep(times = 4), 
+                            xmin        = c(0.72, 0.92, 1.08, 1.28) %>% rep(times = 4), 
+                            xmax        = c(1.72, 1.92, 2.08, 2.28) %>% rep(times = 4),
+                            annotations = c("***", "***", "***", "***", 
+                                            "NS.", "NS.", "NS.", "NS.", 
+                                            "***", "***", "***", "***", 
+                                            "NS.", "NS.", "NS.", "NS.")),
+                        tip_length = 0.01, 
+                        manual = TRUE, 
+                        inherit.aes = FALSE) +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = element_blank(),
+       y = "histone mark variability (𝜃 estimate)",
+       fill = "cell type")
+ggsave(str_c("plots/paper_fig.2a_axel_ihec_figure_panel_1_faceted_promoters_enhancers_histogram_all_marks_boxplot_v2", ".png"),
+       units = "in",
+       dpi = 600,
+       width  = 5.25 * 1.0,
+       height = 4.50 * 1.0)
+
+# Remaining for supplemental
+ba_whole_genome_anno_chr_all_hist_long %>% 
+  filter(bayes_mean_value != 0) %>% 
+  filter(mark %in% vector_marks_remaining) %>% 
+  ggplot(aes(x = feature, y = bayes_mean_value, fill = celltype)) +
+  geom_boxplot(outlier.shape = NA) +
+  facet_wrap(facets = vars(mark), nrow = 1, strip.position = "top") +
+  scale_x_discrete(expand = c(0.25, 0.25)) +
+  scale_y_continuous(labels = function(x) {ifelse(x == 0, "", x)},
+                     breaks = seq(from = 1/4, to = 1, by = 1/4), 
+                     minor_breaks = seq(from = 1/8, to = 1, by = 1/8), 
+                     limits = c(1/16, 1.275)) +
+  scale_color_manual(values = "black") +
+  scale_fill_manual(values = vector_celltype_colors_light) +
+  ggsignif::geom_signif(data = data.frame(seq_number_signifs_per_facet = 1:4), 
+                        aes(y_position  = c(1.05, 1.10, 1.15, 1.20) %>% rep(times = 2), 
+                            xmin        = c(0.72, 0.92, 1.08, 1.28) %>% rep(times = 2), 
+                            xmax        = c(1.72, 1.92, 2.08, 2.28) %>% rep(times = 2),
+                            annotations = c("NS.", "NS.", "NS.", "NS.", 
+                                            "NS.", "NS.", "NS.", "NS.")),
+                        tip_length = 0.01, 
+                        manual = TRUE, 
+                        inherit.aes = FALSE) +
+  theme_bw() +
+  theme(legend.position = "right",
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = element_blank(),
+       y = "histone mark variability (𝜃 estimate)",
+       fill = "cell type")
+ggsave(str_c("plots/paper_fig.2a.Supp", ".png"),
+       units = "in",
+       dpi = 600,
+       width  = 6.0 * 1.1,
+       height = 2.7 * 1.1)
+
+# # Faceted histograms
+# ba_whole_genome_anno_chr_all_hist_long %>% 
+#   filter(bayes_mean_value != 0) %>% 
+#   filter(mark %in% vector_marks_fig2_v2) %>% 
+#   ggplot(aes(x = bayes_mean_value, fill = celltype)) +
+#   geom_histogram(aes(y = after_stat(count)*(50/const_hg38_autosome_length)), bins = 8) +
+#   ggh4x::facet_nested(rows = vars(feature, celltype), cols = vars(mark)) +
+#   scale_x_continuous(labels = function(x) ifelse(x == 0, "0", ifelse(x == 1, "1", ifelse(x == 0.25, "", ifelse(x == 0.75, "", x))))) +
+#   scale_y_continuous(labels = scales::percent) +
+#   scale_fill_manual(values = vector_celltype_colors) +
+#   theme_bw() +
+#   theme(axis.text.y = element_text(size = 5)) +
+#   labs(x = "histone 𝜃 estimate",
+#        y = "genomic coverage",
+#        fill = "cell type")
+# ggsave(str_c("plots/axel_ihec_figure_panel_1_faceted_promoters_enhancers_histogram_all_marks_nested", ".png"),
+#        units = "in",
+#        dpi = 600,
+#        width  = 7.0 * 0.95,
+#        height = 4.5 * 0.95)
+
+# Get numbers for paper NEW
+# Median theta in H3K27ac promoters
+ba_whole_genome_anno_chr_all_hist_long %>% 
+  filter(bayes_mean_value != 0,
+         mark == "H3K27ac",
+         feature == "promoters") %>% 
+  pull(bayes_mean_value) %>% 
+  median()
+
+# Median theta in H3K4me3 promoters
+ba_whole_genome_anno_chr_all_hist_long %>% 
+  filter(bayes_mean_value != 0,
+         mark == "H3K4me3",
+         feature == "promoters") %>% 
+  pull(bayes_mean_value) %>% 
+  median()
+
+##########
+# Variability between promoters and enhancers p-value
+ba_tests %>% 
+  filter(mark %in% c("H3K27ac", "H3K4me3")) %>% 
+  pull(p.value)
+##########
+
+# Median theta in H3K27ac promoters
+ba_whole_genome_anno_chr_all_hist_long %>% 
+  filter(bayes_mean_value != 0,
+         mark == "H3K27ac",
+         feature == "enhancers") %>% 
+  pull(bayes_mean_value) %>% 
+  median()
+
+# Median theta in H3K4me3 promoters
+ba_whole_genome_anno_chr_all_hist_long %>% 
+  filter(bayes_mean_value != 0,
+         mark == "H3K4me3",
+         feature == "enhancers") %>% 
+  pull(bayes_mean_value) %>% 
+  median()
+
+# Get significance of H3K27me3 vs others
+# Get current bayes values of promoters vs enhancers
+ba_tests2 <-
+  lapply(c("H3K27ac", "H3K4me1", "H3K4me3"), function(current_mark) {
+    lapply(c("promoters", "enhancers"), function(current_feature) {
+      
+      # Get current theta values
+      current_bayes_vals_1 <- ba_whole_genome_anno_chr_all_hist_long %>% filter(bayes_mean_value != 0, mark == current_mark, feature == current_feature) %>% pull(bayes_mean_value)
+      current_bayes_vals_2 <- ba_whole_genome_anno_chr_all_hist_long %>% filter(bayes_mean_value != 0, mark == "H3K27me3",   feature == current_feature) %>% pull(bayes_mean_value)
+      
+      # Perform test
+      # Rather than a null hypothesis that the difference between the 
+      t.test(x = current_bayes_vals_1 - (1/8),
+             y = current_bayes_vals_2, 
+             alternative = "greater") %>% 
+        broom::tidy() %>% 
+        mutate(mark1   = current_mark,
+               mark2   = "H3K27me3",
+               feature = current_feature,
+               .before = 1)
+      
+    }) %>% do.call("bind_rows", .)
+  }) %>% do.call("bind_rows", .)
+
+# New stability plot
+ba_whole_genome_anno_chr_all_hist_long_v2 <-
+  ba_whole_genome_anno_chr_all_hist_long %>% 
+  filter(bayes_mean_value != 0) %>% 
+  filter(mark %in% vector_marks_fig2) %>% 
+  mutate(bayes_mean_value_category = case_when((bayes_mean_value >= 0.75)                           ~ "stable",
+                                               (bayes_mean_value < 0.75 & bayes_mean_value >= 0.50) ~ "slight",
+                                               (bayes_mean_value < 0.50 & bayes_mean_value >= 0.25) ~ "moderate",
+                                               (bayes_mean_value < 0.25)                            ~ "high") %>% factor(c("stable", "slight", "moderate", "high"))) 
+
+ba_whole_genome_anno_chr_all_hist_long_v2_summarized <-
+  ba_whole_genome_anno_chr_all_hist_long_v2 %>% 
+  group_by(feature, mark, celltype) %>% 
+  summarize(bayes_mean_value_category_fraction_var_stable   = .data[["bayes_mean_value_category"]] %>% `==`("stable")   %>% {sum(.)/length(.)},
+            bayes_mean_value_category_fraction_var_slight   = .data[["bayes_mean_value_category"]] %>% `==`("slight")   %>% {sum(.)/length(.)},
+            bayes_mean_value_category_fraction_var_moderate = .data[["bayes_mean_value_category"]] %>% `==`("moderate") %>% {sum(.)/length(.)},
+            bayes_mean_value_category_fraction_var_high     = .data[["bayes_mean_value_category"]] %>% `==`("high")     %>% {sum(.)/length(.)}) %>% 
+  pivot_longer(cols = starts_with("bayes_mean_value_category_fraction_var_"),
+               names_to = "bayes_mean_value_category",
+               names_prefix = "bayes_mean_value_category_fraction_var_",
+               values_to = "bayes_mean_value_category_fraction") %>% 
+  mutate(bayes_mean_value_category = bayes_mean_value_category %>% factor(c("stable", "slight", "moderate", "high")))
+
+# Plot category-wise structure of variability
+ba_whole_genome_anno_chr_all_hist_long_v2_summarized %>% 
+  ggplot(aes(x = celltype, y = bayes_mean_value_category_fraction, fill = bayes_mean_value_category)) +
+  geom_col(position = "stack") +
+  ggh4x::facet_nested_wrap(facets = vars(mark, feature), nrow = 2, strip.position = "top") +
+  scale_y_continuous(labels = scales::percent, 
+                     expand = c(0.01, 0.01)) +
+  scale_fill_grey() +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(x = element_blank(),
+       y = "feature coverage by 𝜃 variability category",
+       fill = "histone mark\nvariability")
+ggsave(str_c("plots/paper_fig.2b_variation_structure_v1.png"),
+       units = "in",
+       dpi = 600,
+       width  = 6.0 * 1.0,
+       height = 5.0 * 1.0)
+
+# Get numbers for paper
+ba_whole_genome_anno_chr_all_hist_long_v2_summarized %>% 
+  filter(feature                   == "promoters",
+         mark                      == "H3K27ac",
+         bayes_mean_value_category == "stable") %>% 
+  pull(bayes_mean_value_category_fraction) %>% 
+  mean() %>% 
+  scales::percent()
+
+ba_whole_genome_anno_chr_all_hist_long_v2_summarized %>% 
+  filter(feature                   == "promoters",
+         mark                      == "H3K4me3",
+         bayes_mean_value_category == "stable") %>% 
+  pull(bayes_mean_value_category_fraction) %>% 
+  mean() %>% 
+  scales::percent()
+
+ba_whole_genome_anno_chr_all_hist_long_v2_summarized %>% 
+  filter(feature                   == "promoters",
+         mark                      == "H3K27ac",
+         bayes_mean_value_category == "high") %>% 
+  pull(bayes_mean_value_category_fraction) %>% 
+  mean() %>% 
+  scales::percent()
+
+ba_whole_genome_anno_chr_all_hist_long_v2_summarized %>% 
+  filter(feature                   == "promoters",
+         mark                      == "H3K4me3",
+         bayes_mean_value_category == "high") %>% 
+  pull(bayes_mean_value_category_fraction) %>% 
+  mean() %>% 
+  scales::percent()
+
+ba_whole_genome_anno_chr_all_hist_long_v2_summarized %>% 
+  filter(feature                   == "promoters",
+         mark                      == "H3K27me3",
+         bayes_mean_value_category == "high") %>% 
+  pull(bayes_mean_value_category_fraction) %>% 
+  mean() %>% 
+  scales::percent()
+
+ba_whole_genome_anno_chr_all_hist_long_v2_summarized %>% 
+  filter(feature                   == "enhancers",
+         mark                      == "H3K27me3",
+         bayes_mean_value_category == "high") %>% 
+  pull(bayes_mean_value_category_fraction) %>% 
+  mean() %>% 
+  scales::percent()
+
+ba_whole_genome_anno_chr_all_hist_long_v2_summarized %>% 
+  filter(feature                   == "promoters",
+         mark                      == "H3K27me3",
+         bayes_mean_value_category == "stable") %>% 
+  pull(bayes_mean_value_category_fraction) %>% 
+  mean() %>% 
+  scales::percent()
+
+ba_whole_genome_anno_chr_all_hist_long_v2_summarized %>% 
+  filter(feature                   == "enhancers",
+         mark                      == "H3K27me3",
+         bayes_mean_value_category == "stable") %>% 
+  pull(bayes_mean_value_category_fraction) %>% 
+  mean() %>% 
+  scales::percent()
+```
+
+# ####################################################################################################################################################################################
+# Fig. 2b quartiles
+# ####################################################################################################################################################################################
+```{r}
+# Read in necessary data
+ba_promoters_rpkm_bayes_anno_clean_summarized <- readRDS("objects/ba_promoters_rpkm_bayes_anno_clean_summarized.RDS")
+
+# Summarize info by quartile
+ba_promoters_rpkm_bayes_anno_clean_summarized_quartiled <-
+  lapply(vector_marks, function(current_mark) {
+    lapply(vector_celltypes, function(current_celltype) {
+      
+      # Get current modality
+      current_frame_subset <- 
+        ba_promoters_rpkm_bayes_anno_clean_summarized %>% 
+        filter(mark == current_mark,
+               celltype == current_celltype)
+      
+      # Get octiles for current frame
+      current_rpkm_quartiles <- 
+        current_frame_subset %>% pull(gene_rpkm_mean) %>% quantile(probs = seq(0, 1, 0.25))
+      
+      current_rsd_quartiles <- 
+        current_frame_subset %>% pull(gene_rpkm_rsd) %>% quantile(probs = seq(0, 1, 0.25))
+      
+      ba_promoters_rpkm_bayes_anno_clean_summarized %>% 
+        mutate(gene_rpkm_mean_quartile_1   = (gene_rpkm_mean <  current_rpkm_quartiles["25%"]),
+               gene_rpkm_mean_quartile_2   = (gene_rpkm_mean >= current_rpkm_quartiles["25%"]) & (gene_rpkm_mean < current_rpkm_quartiles["50%"]),
+               gene_rpkm_mean_quartile_3   = (gene_rpkm_mean >= current_rpkm_quartiles["50%"]) & (gene_rpkm_mean < current_rpkm_quartiles["75%"]),
+               gene_rpkm_mean_quartile_4   = (gene_rpkm_mean >= current_rpkm_quartiles["75%"]),
+               gene_rsd_mean_quartile_1    = (gene_rpkm_rsd  <  current_rsd_quartiles["25%"]),
+               gene_rsd_mean_quartile_2    = (gene_rpkm_rsd  >= current_rsd_quartiles["25%"])  & (gene_rpkm_rsd < current_rsd_quartiles["50%"]),
+               gene_rsd_mean_quartile_3    = (gene_rpkm_rsd  >= current_rsd_quartiles["50%"])  & (gene_rpkm_rsd < current_rsd_quartiles["75%"]),
+               gene_rsd_mean_quartile_4    = (gene_rpkm_rsd  >= current_rsd_quartiles["75%"]))
+      
+    }) %>% do.call("bind_rows", .)
+  }) %>% do.call("bind_rows", .)
+
+# Convert to long
+ba_promoters_rpkm_bayes_anno_clean_summarized_quartiled_long <- 
+  ba_promoters_rpkm_bayes_anno_clean_summarized_quartiled %>% 
+  pivot_longer(cols = starts_with("gene_rpkm_mean_quartile_"), 
+               names_to = "gene_rpkm_mean_quartile", 
+               names_transform = function(x) x %>% str_remove("gene_rpkm_mean_quartile_") %>% as.integer(), 
+               values_to = "gene_rpkm_mean_quartile_logical") %>% 
+  filter(gene_rpkm_mean_quartile_logical == TRUE) %>% 
+  select(-gene_rpkm_mean_quartile_logical) %>% 
+  pivot_longer(cols = starts_with("gene_rsd_mean_quartile_"), 
+               names_to = "gene_rsd_mean_quartile", 
+               names_transform = function(x) x %>% str_remove("gene_rsd_mean_quartile_") %>% as.integer(), 
+               values_to = "gene_rsd_mean_quartile_logical") %>% 
+  filter(gene_rsd_mean_quartile_logical == TRUE) %>% 
+  select(-gene_rsd_mean_quartile_logical)
+
+# Summarize again
+# Add RSD stability column
+ba_promoters_rpkm_bayes_anno_clean_summarized_quartiled_long_summarized <-
+  ba_promoters_rpkm_bayes_anno_clean_summarized_quartiled_long %>% 
+  group_by(mark, gene_rpkm_mean_quartile, gene_rsd_mean_quartile) %>% 
+  summarize(mean_gene_prom_mean_theta_raw = mean(gene_prom_mean_theta_raw)) %>% 
+  mutate(gene_rsd_stability_mean_quartile = gene_rsd_mean_quartile %>% `-`(5L) %>% abs(), .after = gene_rsd_mean_quartile) %>% 
+  mutate(gene_rpkm_mean_quartile          = gene_rpkm_mean_quartile %>% factor(1:4),
+         gene_rsd_mean_quartile           = gene_rsd_mean_quartile  %>% factor(4:1),
+         gene_rsd_stability_mean_quartile = gene_rsd_stability_mean_quartile %>% factor(1:4))
+
+# Plot
+ba_promoters_rpkm_bayes_anno_clean_summarized_quartiled_long_summarized %>% 
+  filter(mark %in% c("H3K27ac", "H3K4me3")) %>% 
+  ggplot(aes(x = gene_rpkm_mean_quartile, y = gene_rsd_stability_mean_quartile)) +
+  geom_tile(aes(fill = mean_gene_prom_mean_theta_raw)) +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  # scale_fill_gradient(low = "grey80", high = "grey20") +
+  scale_fill_viridis_c(direction = -1) +
+  facet_wrap(~ mark, nrow = 1) +
+  labs(x = "gene expression quartile",
+       y = "gene expression \nstability quartile",
+       fill = "mean promoter 𝜃") +
+  theme_bw() +
+  theme(aspect.ratio = 1/1,
+        legend.position = "bottom",
+        legend.key.width = unit(0.3625, "in"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank())
+ggsave("plots/paper_fig.2c_ba_promoters_rpkm_bayes_anno_clean_summarized_quartiled_long_summarized_squares_v2.png",
+       units  = "in",
+       dpi = 600,
+       width  = 5.0 * 0.9,
+       height = 3.5 * 0.9)
+```
+
+# Fig. 2b v2 (OLD)
+```{r}
+# Keep distinct rows only
+ba_promoters_rpkm_bayes_anno_clean_summarized_quartiled_long_v2 <- 
+  ba_promoters_rpkm_bayes_anno_clean_summarized_quartiled_long %>% 
+  distinct(mark, celltype, ensembl_gene_id, .keep_all = TRUE)
+
+# Plot
+ba_promoters_rpkm_bayes_anno_clean_summarized_quartiled_long_v2 %>% 
+  filter(mark %in% c("H3K27ac", "H3K4me3")) %>% 
+  ggplot(aes(x = gene_prom_mean_theta_raw, y = gene_rpkm_rsd)) +
+  geom_hex() +
+  scale_fill_viridis_c() +
+  facet_grid(rows = vars(mark), cols = vars(celltype)) +
+  scale_x_continuous(labels = function(x) ifelse(x == 0, "0", ifelse(x == 1, "1", ifelse(x == 0.25, "", ifelse(x == 0.75, "", x))))) +
+  labs(title = "gene promoter 𝜃 vs. RPKM RSD, all genes",
+       x = "gene promoter 𝜃",
+       y = "gene RPKM RSD") +
+  theme_bw() +
+  theme(aspect.ratio = 1/1)
+ggsave("plots/paper_fig.2b_v2_genes_all.png",
+       units  = "in",
+       dpi = 600,
+       width  = 5.0 * 1.2,
+       height = 3.5 * 1.2)
+
+# Plot quartiles
+for (current_quartile in 1:4) {
+  
+  ba_promoters_rpkm_bayes_anno_clean_summarized_quartiled_long_v2 %>% 
+    filter(mark %in% c("H3K27ac", "H3K4me3"),
+           gene_rpkm_mean_quartile == current_quartile) %>% 
+    ggplot(aes(x = gene_prom_mean_theta_raw, y = gene_rpkm_rsd)) +
+    geom_hex() +
+    scale_fill_viridis_c() +
+    facet_grid(rows = vars(mark), cols = vars(celltype)) +
+    scale_x_continuous(labels = function(x) ifelse(x == 0, "0", ifelse(x == 1, "1", ifelse(x == 0.25, "", ifelse(x == 0.75, "", x))))) +
+    labs(title = str_c("gene promoter 𝜃 vs. RPKM RSD, gene RPKM quartile ", current_quartile),
+         x = "gene promoter 𝜃",
+         y = "gene RPKM RSD") +
+    theme_bw() +
+    theme(aspect.ratio = 1/1)
+  ggsave(str_c("plots/paper_fig.2b_v2_genes_quartile_", current_quartile,".png"),
+         units  = "in",
+         dpi = 600,
+         width  = 5.0 * 1.2,
+         height = 3.5 * 1.2)
+}
+
+# Get numbers for paper
+# Correlation, theta vs RPKM, H3K27ac
+cor(x = ba_promoters_rpkm_bayes_anno_clean_summarized %>% filter(mark == "H3K27ac") %>% pull(gene_prom_mean_theta_raw), 
+    y = ba_promoters_rpkm_bayes_anno_clean_summarized %>% filter(mark == "H3K27ac") %>% pull(gene_rpkm_mean), 
+    use = "pairwise.complete.obs",
+    method = "spearman")
+
+# Correlation, theta vs RSD, H3K27ac
+cor(x = ba_promoters_rpkm_bayes_anno_clean_summarized %>% filter(mark == "H3K27ac") %>% pull(gene_prom_mean_theta_raw), 
+    y = ba_promoters_rpkm_bayes_anno_clean_summarized %>% filter(mark == "H3K27ac") %>% pull(gene_rpkm_rsd), 
+    use = "pairwise.complete.obs",
+    method = "spearman")
+
+# Correlation, theta vs RPKM, H3K4me3
+cor(x = ba_promoters_rpkm_bayes_anno_clean_summarized %>% filter(mark == "H3K4me3") %>% pull(gene_prom_mean_theta_raw), 
+    y = ba_promoters_rpkm_bayes_anno_clean_summarized %>% filter(mark == "H3K4me3") %>% pull(gene_rpkm_mean), 
+    use = "pairwise.complete.obs",
+    method = "spearman")
+
+# Correlation, theta vs RSD, H3K4me3
+cor(x = ba_promoters_rpkm_bayes_anno_clean_summarized %>% filter(mark == "H3K4me3") %>% pull(gene_prom_mean_theta_raw), 
+    y = ba_promoters_rpkm_bayes_anno_clean_summarized %>% filter(mark == "H3K4me3") %>% pull(gene_rpkm_rsd), 
+    use = "pairwise.complete.obs",
+    method = "spearman")
+```
+
+# ####################################################################################################################################################################################
+# Fig. 2c
+# ####################################################################################################################################################################################
+# Visualizing promoter 𝜃 and expression correlation among top hits (EPSTI1 and CXCL10)
+```{r}
+# Basic data
+ba_promoters_rpkm_bayes_anno_clean_summarized <- readRDS("objects/ba_promoters_rpkm_bayes_anno_clean_summarized.RDS")
+
+# RPKMs and transform to long form
+rpkm_matrix_long <-
+  readRDS("objects/rpkm_matrix.RDS") %>% 
+  pivot_longer(-ENSG, names_to = "sample", values_to = "RPKM") %>% 
+  mutate(individual = sample %>% str_split_i(" ", i = 2) %>% str_c("Individual_", .),
+         celltype   = sample %>% str_split_i(" ", i = 3),
+         .before = 1) %>% 
+  select(-sample)
+
+# Read in gene info and positions and filepaths
+biomart_gene_info <- readRDS("objects/biomart_gene_info.RDS")
+ba_promoter_positions <- readRDS("objects/ba_promoter_positions.RDS")
+chipseq_treatment_wasp_bigWig_filepaths <- readRDS("objects/chipseq_treatment_wasp_bigWig_filepaths.RDS")
+
+# Quick symbol key
+ba_quick_hgnc_symbol_key <- 
+  biomart_gene_info %>% 
+  mcols() %>% 
+  as_tibble() %>% 
+  filter(hgnc_symbol != "") %>% 
+  select(-entrezgene_id) %>% 
+  distinct(hgnc_symbol, ensembl_gene_id, .keep_all = TRUE)
+
+# Get top hits based on RPKM RSD > 100 and promoter theta below 0.75
+ba_promoters_rpkm_bayes_anno_clean_summarized_top_hits_v2 <- 
+  ba_promoters_rpkm_bayes_anno_clean_summarized %>% 
+  mutate(gene_promoter_mean_bayes_dist_from_0.5 = abs(gene_prom_mean_theta_raw - 0.5)) %>% 
+  filter((gene_rpkm_rsd > 100) & (gene_prom_mean_theta_raw < 0.75)) %>% # filter top hits
+  arrange(desc(gene_rpkm_rsd), gene_promoter_mean_bayes_dist_from_0.5) %>% 
+  left_join(ba_quick_hgnc_symbol_key, by = join_by(ensembl_gene_id)) %>% 
+  relocate(hgnc_symbol, .after = ensembl_gene_id)
+
+# Create function
+generate_gene_cohort_table_v2 <- 
+  function(current_mark, current_celltype, current_gene) {
+    
+    # Get current ensg
+    current_ensg <- biomart_gene_info %>% plyranges::filter(hgnc_symbol == current_gene) %>% `$`(ensembl_gene_id)
+    
+    # Get current promoter position
+    current_promoter_position <- ba_promoter_positions %>% filter(gene_id == current_ensg) %>% as_granges() %>% reduce_ranges()
+    
+    # Current promoter tiled
+    current_promoter_position_tiled <- current_promoter_position %>% tile_ranges(width = 1) %>% plyranges::select(-partition)
+    
+    # Get current individual ChIP-seq WASP alignment filepaths
+    current_chip_seq_filepaths <- 
+      chipseq_treatment_wasp_bigWig_filepaths %>% 
+      filter(mark == current_mark,
+             sample %>% str_detect(str_c(current_celltype, "$"))) %>% 
+      pull(filepath)
+    
+    # Get current metadata values on whole set
+    current_tibble_setup <- 
+      ba_promoters_rpkm_bayes_anno_clean_summarized %>% 
+      filter(mark == current_mark,
+             celltype == current_celltype,
+             ensembl_gene_id == current_ensg) %>% 
+      mutate(gene = current_gene, .after = ensembl_gene_id)
+    
+    # Pull up mean promoter ChIP-seq pileup depth for all files
+    current_gene_cohort_data <-
+      lapply(seq_along(current_chip_seq_filepaths), function(i) {
+        
+        # Calculate mean depth at gene promoter for each individual
+        tibble(individual = str_c("Individual_", i),
+               mean_promoter_chip_seq_depth = 
+                 current_chip_seq_filepaths[i] %>% 
+                 read_bigwig() %>% 
+                 join_overlap_intersect(current_promoter_position_tiled, .) %>% 
+                 `$`(score) %>% 
+                 mean(na.rm = TRUE))
+        
+      }) %>% do.call("bind_rows", .) 
+    
+    # Add RPKM for the gene
+    current_gene_cohort_data_w_rpkm <- 
+      current_gene_cohort_data %>% 
+      bind_cols(rpkm_matrix_long %>% 
+                  filter(ENSG == current_ensg,
+                         celltype == current_celltype) %>% 
+                  select(RPKM))
+    
+    # Add setup data
+    current_gene_cohort_data_w_rpkm_w_setup <-
+      current_tibble_setup %>% 
+      bind_cols(current_gene_cohort_data_w_rpkm) %>% 
+      mutate(set_id = str_c(current_gene, current_mark, current_celltype, sep = "_"), .after = gene)
+    
+    # Add correlation
+    current_gene_cohort_data_w_rpkm_w_setup_cor <-
+      current_gene_cohort_data_w_rpkm_w_setup %>% 
+      group_by(set_id) %>% 
+      summarize(pearson_cor = cor(x = .data[["mean_promoter_chip_seq_depth"]],
+                                  y = .data[["RPKM"]],
+                                  method = "pearson")) %>% 
+      left_join(current_gene_cohort_data_w_rpkm_w_setup, ., by = join_by(set_id)) %>% 
+      arrange(desc(pearson_cor))
+    
+    # Return
+    current_gene_cohort_data_w_rpkm_w_setup_cor
+  }
+
+#################################################################################################################################
+#################################################################################################################################
+# Temporary subset to just your interesting examples
+# CXCL10 & EPSTI1
+ba_promoters_rpkm_bayes_anno_clean_summarized_top_hits_v2_subset <-
+  ba_promoters_rpkm_bayes_anno_clean_summarized_top_hits_v2 %>% 
+  filter(((hgnc_symbol == "CXCL10") & (mark == "H3K27ac") & (celltype == "LP")) |
+           ((hgnc_symbol == "EPSTI1") & (mark == "H3K27ac") & (celltype == "LC")))
+
+#################################################################################################################################
+#################################################################################################################################
+# Calculate a table of RPKM and promoter theta correlations
+ba_gene_rpkm_chip_cohort_table_v2_cor <- 
+  mclapply(seq_along(rownames(ba_promoters_rpkm_bayes_anno_clean_summarized_top_hits_v2_subset)), function(i) {
+    
+    # Run function on all combinations
+    generate_gene_cohort_table_v2(current_mark     = ba_promoters_rpkm_bayes_anno_clean_summarized_top_hits_v2_subset$mark[i] %>% as.character(),
+                                  current_celltype = ba_promoters_rpkm_bayes_anno_clean_summarized_top_hits_v2_subset$celltype[i] %>% as.character(),
+                                  current_gene     = ba_promoters_rpkm_bayes_anno_clean_summarized_top_hits_v2_subset$hgnc_symbol[i] %>% as.character())
+    
+  }, mc.cores = length(ba_promoters_rpkm_bayes_anno_clean_summarized_top_hits_v2_subset)) %>% do.call("bind_rows", .)
+
+# Plot all sets above
+for (current_set_id in ba_gene_rpkm_chip_cohort_table_v2_cor %>% pull(set_id) %>% unique()) {
+  
+  # Subset to current table
+  current_theta_rpkm_table <-
+    ba_gene_rpkm_chip_cohort_table_v2_cor %>% 
+    filter(set_id == current_set_id) 
+  
+  # Get current variables
+  current_mark           <- current_theta_rpkm_table %>% pull(mark)                     %>% unique()
+  current_celltype       <- current_theta_rpkm_table %>% pull(celltype)                 %>% unique()
+  current_gene           <- current_theta_rpkm_table %>% pull(gene)                     %>% unique()
+  current_promoter_theta <- current_theta_rpkm_table %>% pull(gene_prom_mean_theta_raw) %>% unique()
+  current_rpkm_rsd       <- current_theta_rpkm_table %>% pull(gene_rpkm_rsd)            %>% unique()
+  current_cor            <- current_theta_rpkm_table %>% pull(pearson_cor)              %>% unique()
+  
+  # Set specific y limits for each set ID
+  if (current_set_id == "CXCL10_H3K27ac_LP") {
+    current_xlims <- c(0, 12.75)
+    current_ylims <- c(10^-0.4, 10^3)
+  } else if (current_set_id == "EPSTI1_H3K27ac_LC") {
+    current_xlims <- c(0, 30.11)
+    current_ylims <- c(10^-0.4, 10^2)
+  } else {
+    stop("Custom y limits not set for this current gene/mark/celltype combination")
+  }
+  
+  # Plot
+  current_theta_rpkm_table %>% 
+    ggplot(aes(x = mean_promoter_chip_seq_depth, y = RPKM)) +
+    geom_smooth(method = "lm", 
+                formula = y ~ x, 
+                se = FALSE, 
+                color = "grey60") +
+    geom_point() +
+    xlim(current_xlims) +
+    scale_y_log10(labels = scales::trans_format("log10", scales::math_format(10^.x)), 
+                  breaks = function(x) 10^(0:10)[10^(0:10) > x[1] & 10^(0:10) < x[2]], 
+                  limits = current_ylims,
+                  expand = expansion(mult = c(0, 0.05))) +
+    annotation_logticks(sides = "l", 
+                        color = "grey20",
+                        short = unit(0.05, "cm"),
+                        mid   = unit(0.10, "cm"),
+                        long  = unit(0.15, "cm")) +
+    theme_bw() +
+    theme(aspect.ratio = 1/1,
+          plot.title = element_text(size = 10),
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor.y = element_blank()) +
+    labs(title = str_c(current_gene, " (", current_mark, ", ", current_celltype, "s)"),
+         x = "promoter ChIP-seq signal\n(normalized read depth)",
+         y = "gene expression (RPKM)")
+  
+  # Save
+  ggsave(str_c("plots/paper_fig.2d_ba_theta_rpkm_cor_", ifelse(is.na(signif(current_cor, 3)), "NA", signif(current_cor, 3)), 
+               "_promotertheta_", ifelse(is.na(signif(current_promoter_theta, 3)), "NA", signif(current_promoter_theta, 3)), 
+               "_rpkmrsd_", ifelse(is.na(signif(current_rpkm_rsd, 3)), "NA", signif(current_rpkm_rsd, 3)), 
+               "_set_id_", current_set_id, "_v2", ".png"),
+         units = "in",
+         dpi = 600,
+         width  = 2.75,
+         height = 2.75)
+  
+  # Progress
+  message(timestamp(quiet = TRUE), str_c(" Done with set ", current_set_id))
+}
+```
+
+# ####################################################################################################################################################################################
+# Fig. Supp
+# ####################################################################################################################################################################################
+## 8.1 TF binding motif analysis
+```{r}
+# Run Homer on all modalities
+mclapply(vector_modalities, function(current_modality) {
+  mclapply(ba_variability_categories_nonabsent, function(current_ba_var_cat) {
+    
+    # Main homer-calling function
+    ba_whole_genome_anno_chr_all %>% 
+      plyranges::filter(get(str_c("bayes_category_", current_modality)) == current_ba_var_cat) %>% 
+      reduce_ranges() %>% 
+      as_tibble() %>% 
+      rename(chrom = seqnames) %>% 
+      find_motifs_genome(genome = "hg38", path = str_c("output/homer/", current_modality, "_", current_ba_var_cat %>% str_replace_all(" ", "_")))
+    
+  }, mc.cores = length(ba_variability_categories_nonabsent))
+}, mc.cores = length(vector_modalities))
+
+# Read in results as a single tibble
+# Loop through marks and create sub-list for each mark in original object
+ba_homer_results <- 
+  mclapply(vector_modalities, function(current_modality) {
+    mclapply(ba_variability_categories_nonabsent, function(current_ba_var_cat) {
+      
+      # Get current mark and celltype
+      current_mark <- current_modality %>% str_split_i(pattern = "_", i = 1)
+      current_celltype <- current_modality %>% str_split_i(pattern = "_", i = 2)
+      
+      # Read in homer folders
+      read_delim(str_c("output/homer/", current_modality, "_", current_ba_var_cat %>% str_replace_all(" ", "_"), "/knownResults.txt"), delim = "\t", show_col_types = FALSE, progress = FALSE) %>% 
+        mutate(mark = current_mark,
+               celltype = current_celltype,
+               variability_category = current_ba_var_cat,
+               modality_rank = seq_along(rownames(.)),
+               .before = 1)
+      
+    }, mc.cores = length(ba_variability_categories_nonabsent)) %>% do.call("bind_rows", .)
+  }, mc.cores = length(vector_modalities)) %>% do.call("bind_rows", .)
+```
+
+## 8.2 TF binding motif analysis downstream 1
+```{r}
+# Print out top 5 TF enrichments in each modality
+mclapply(vector_marks, function(current_mark) {
+  mclapply(vector_celltypes, function(current_celltype) {
+    mclapply(ba_variability_categories_nonabsent, function(current_ba_var_cat) {
+      
+      # Plot top examples
+      ba_homer_results %>% 
+        filter(mark == current_mark,
+               celltype == current_celltype,
+               variability_category == current_ba_var_cat) %>% 
+        filter(modality_rank %in% 1:5) %>% 
+        rename(rank = modality_rank) %>% 
+        select(1:9, 11) %>% 
+        gt() %>% 
+        tab_options(heading.title.font.weight = "bold",
+                    row_group.font.weight = "bold",
+                    row_group.background.color = "gray",
+                    column_labels.vlines.style = "solid",
+                    column_labels.vlines.width = 1,
+                    column_labels.font.weight =  "light") %>% 
+        cols_align(align = "left",
+                   columns = everything()) %>% 
+        gtsave(str_c("plots/", "ba_homer_modality_top_hits_", current_mark, "_", current_celltype, "_", str_replace_all(current_ba_var_cat, " ", "_"), ".html"))
+      
+      # Convert to png
+      webshot::webshot(url =  str_c("plots/", "ba_homer_modality_top_hits_", current_mark, "_", current_celltype, "_", str_replace_all(current_ba_var_cat, " ", "_"), ".html"),
+                       file = str_c("plots/", "ba_homer_modality_top_hits_", current_mark, "_", current_celltype, "_", str_replace_all(current_ba_var_cat, " ", "_"), ".png"),
+                       vwidth = 1500, vheight = 500, zoom = 4)
+      
+    }, mc.cores = length(ba_variability_categories_nonabsent))
+  }, mc.cores = length(vector_celltypes))
+}, mc.cores = length(vector_marks))
+```
+
+## 8.3 TF binding monaLisa motif analysis diff between variability categories
+```{r}
+# Get PWMs
+pwms_jaspar2020 <- 
+  TFBSTools::getMatrixSet(JASPAR2020::JASPAR2020,
+                          opts = list(matrixtype = "PWM",
+                                      tax_group = "vertebrates"))
+
+# Save monaLisa results as a list
+monaLisa_results <- 
+  mclapply(vector_modalities, function(current_modality) {
+    
+    # Create objects as in monaLisa Bioconductor guide
+    current_grs_consistent <- 
+      ba_whole_genome_anno_chr_all %>% 
+      plyranges::filter(get(str_c("bayes_category_", current_modality)) == "consistent") %>% 
+      reduce_ranges()
+    
+    current_grs_highly_variable <- 
+      ba_whole_genome_anno_chr_all %>% 
+      plyranges::filter(get(str_c("bayes_category_", current_modality)) == "highly variable") %>% 
+      reduce_ranges() 
+    
+    current_grs_joined <- c(current_grs_consistent, current_grs_highly_variable)
+    
+    current_grs_seqs <- 
+      getSeq(BSgenome.Hsapiens.UCSC.hg38, current_grs_joined)
+    
+    bins2 <- rep(c("consistent", "highly_variable"), c(length(current_grs_consistent), length(current_grs_highly_variable))) %>% factor()
+    
+    # Create objects as in monaLisa Bioconductor guide
+    se2 <- calcBinnedMotifEnrR(seqs = current_grs_seqs, 
+                               bins = bins2,
+                               pwmL = pwms_jaspar2020, 
+                               BPPARAM = MulticoreParam(workers = floor(detectCores()/length(vector_modalities))))
+    
+    sel2 <- apply(assay(se2, "negLog10Padj"), 1, 
+                  function(x) max(abs(x), 0, na.rm = TRUE)) > 4.0
+    
+    # Return objects as list
+    list(se2 = se2,
+         sel2 = sel2)
+    
+  }, mc.cores = length(vector_modalities)) %>% `names<-`(vector_modalities)
+
+# Custom plot on monaLisa results
+monaLisa_results_log2enr <- 
+  lapply(vector_modalities, function(current_modality) {
+    
+    # Transform modality to mark/celltype
+    current_mark     <- current_modality %>% str_split_i("_", 1)
+    current_celltype <- current_modality %>% str_split_i("_", 2)
+    
+    # Get rowData
+    current_rowData <-
+      monaLisa_results[[current_modality]]$se2[monaLisa_results[[current_modality]]$sel2,] %>% 
+      rowData() %>% 
+      as_tibble() %>% 
+      mutate(mark = current_mark, celltype = current_celltype, .before = 1)
+    
+    # Get log2enr for each row
+    current_log2enr <- 
+      monaLisa_results[[current_modality]]$se2[monaLisa_results[[current_modality]]$sel2,] %>% 
+      assays() %>% 
+      `[[`("log2enr") %>% 
+      as_tibble()
+    
+    # Combine and return
+    bind_cols(current_rowData, current_log2enr)
+    
+  }) %>% do.call("bind_rows", .) %>% 
+  pivot_longer(c(consistent, highly_variable), names_to = "bayes_variability_category", values_to = "log2enr")
+
+# Visualize
+monaLisa_results_log2enr_prepped <-
+  monaLisa_results_log2enr %>% 
+  mutate(bayes_variability_category = bayes_variability_category %>% str_replace_all("_", " ")) %>% 
+  filter(motif.name %in% (motif.name %>% sample(50))) %>% 
+  mutate(bayes_variability_category_v2 = case_when(bayes_variability_category == "consistent"      ~ "stable",
+                                                   bayes_variability_category == "highly variable" ~ "polymorphic") %>% factor(c("stable", "polymorphic")),
+         .after = bayes_variability_category)
+
+# # Plot original
+# monaLisa_results_log2enr_prepped %>% 
+#   filter(mark == "H3K27ac") %>% 
+#   ggplot(aes(x = motif.name, y = log2enr, color = bayes_variability_category_v2)) +
+#   geom_hline(yintercept = log2(1), linetype = "dotted", color = "black") +
+#   geom_boxplot(position = "identity") +
+#   theme_bw() +
+#   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+#   labs(x = element_blank(),
+#        y = "log2(fold enrichment)",
+#        color = "bayesian variability")
+# ggsave("plots/boxplot_monaLisa_results_log2enr.png",
+#        units = "in",
+#        width = 15 * 0.75,
+#        height = 6 * 0.75)
+
+# Plot v2
+# Only stable
+monaLisa_results_log2enr_prepped %>% 
+  filter(mark == "H3K27ac",
+         bayes_variability_category_v2 == "stable") %>% 
+  ggplot(aes(x = motif.name, y = log2enr)) +
+  # geom_hline(yintercept = log2(1), linetype = "dotted", color = "black") +
+  geom_boxplot(position = "identity") +
+  scale_x_discrete(limits = rev) +
+  coord_flip() +
+  theme_bw() +
+  labs(x = element_blank(),
+       y = "log2(fold enrichment)")
+ggsave("plots/paper_fig.Supp_boxplot_monaLisa_results_log2enr_v2.png",
+       units = "in",
+       dpi = 600,
+       width  = 6.0 * 0.75,
+       height = 9.0 * 0.75)
+
+# # Plot v3
+# # Only stable
+# monaLisa_results_log2enr_prepped %>% 
+#   filter(mark == "H3K27ac",
+#          bayes_variability_category_v2 == "stable") %>% 
+#   ggplot(aes(x = motif.name, y = log2enr)) +
+#   # geom_hline(yintercept = log2(1), linetype = "dotted", color = "black") +
+#   geom_boxplot(position = "identity") +
+#   theme_bw() +
+#   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+#   labs(x = element_blank(),
+#        y = "log2(fold enrichment)")
+# ggsave("plots/boxplot_monaLisa_results_log2enr_v3.png",
+#        units = "in",
+#        width  = 6.00 * 0.75,
+#        height = 6.00 * 0.75)
+```
+
+# ####################################################################################################################################################################################
+# Fig. 2e
+# ####################################################################################################################################################################################
+# Setup
+# GO Term Analysis / gprofiler2 gene promoter method
+```{r}
+# Add gene identities to ba_whole_genome_anno_chr_all
+ba_whole_genome_anno_chr_all_prom <-
+  ba_promoter_positions %>% 
+  makeGRangesFromDataFrame(keep.extra.columns = TRUE, seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38)) %>% 
+  keepSeqlevels(const_canonical_autosomes, pruning.mode = "coarse") %>% 
+  join_overlap_left(ba_whole_genome_anno_chr_all %>% plyranges::mutate(unique_50bp_tile_id = seq_along(.)) %>% plyranges::select(unique_50bp_tile_id, transcript:bayes_category_H3K9me3_SC)) %>% 
+  plyranges::filter(promoter) %>% 
+  plyranges::filter(!is.na(gene_id))
+
+# Count the fraction coverage of each gene promoter by bayes_category
+ba_whole_genome_anno_chr_all_prom_bayes_cat_overlaps <- 
+  mclapply(vector_modalities, function(current_modality) {
+    mclapply(ba_variability_categories_nonabsent, function(current_ba_var_cat) {
+      
+      ba_whole_genome_anno_chr_all_prom %>% 
+        as_tibble() %>% 
+        group_by(gene_id) %>% 
+        summarize("bayes_category_{current_modality}_{current_ba_var_cat}" := sum(.data[[str_c("bayes_category_", current_modality)]] == current_ba_var_cat) / length(.data[[str_c("bayes_category_", current_modality)]]))
+      
+    }, mc.cores = length(ba_variability_categories_nonabsent)) %>% do.call("bind_cols", .)
+  }, mc.cores = length(vector_modalities)) %>% do.call("bind_cols", .) %>% 
+  select("gene_id...1", starts_with("bayes_category_")) %>% 
+  rename("gene_id" = "gene_id...1")
+
+# Add columns identifying when 90%+ of promoter for a given gene is covered by a bayes variability category
+ba_whole_genome_anno_chr_all_prom_bayes_cat_overlaps_binarized <- 
+  bind_cols(ba_whole_genome_anno_chr_all_prom_bayes_cat_overlaps,
+            ba_whole_genome_anno_chr_all_prom_bayes_cat_overlaps %>% 
+              select(starts_with("bayes_category_")) %>% 
+              map(function(x) x > 0.9) %>% 
+              bind_cols() %>% 
+              rename_with(function(x) str_c(x, "_over_0.9")))
+```
+
+# Fig. 2e Enriched GO terms figure
+```{r}
+###########################################################################################
+###########################################################################################
+# Get exclusive hit gene lists for Venns
+# Initialize
+ba_whole_genome_anno_chr_all_prom_bayes_consistent_overlap <- 
+  ba_whole_genome_anno_chr_all_prom_bayes_cat_overlaps_binarized %>% 
+  select(gene_id, ends_with("consistent"))
+
+# Thresholds options
+ba_threshold_options <-
+  tibble(ba_hit_threshold    = seq(1, 0.5, -0.05),
+         ba_nonhit_threshold = seq(0, 0.5,  0.05))
+
+# Loop
+ba_whole_genome_anno_chr_all_prom_bayes_consistent_overlap_exclusive_hits_by_threshold <- 
+  lapply(seq_along(rownames(ba_threshold_options)), function(i) {
+    lapply(vector_marks, function(current_mark) {
+      lapply(vector_celltypes, function(current_celltype) {
+        
+        # Get current excluded celltypes
+        current_excluded_celltypes <- 
+          vector_celltypes %>% 
+          str_subset(current_celltype, negate = TRUE)
+        
+        # Get gene ids
+        ba_whole_genome_anno_chr_all_prom_bayes_consistent_overlap %>%
+          mutate("exclusive_hit_{current_mark}_{current_celltype}" := 
+                   if_else(((get(str_c("bayes_category_",   current_mark, "_", current_celltype,              "_", "consistent")) >= ba_threshold_options$ba_hit_threshold[i]) &
+                              (get(str_c("bayes_category_", current_mark, "_", current_excluded_celltypes[1], "_", "consistent")) <= ba_threshold_options$ba_nonhit_threshold[i]) &
+                              (get(str_c("bayes_category_", current_mark, "_", current_excluded_celltypes[2], "_", "consistent")) <= ba_threshold_options$ba_nonhit_threshold[i]) &
+                              (get(str_c("bayes_category_", current_mark, "_", current_excluded_celltypes[3], "_", "consistent")) <= ba_threshold_options$ba_nonhit_threshold[i])), TRUE, FALSE)) %>% 
+          filter(get(str_c("exclusive_hit_", current_mark, "_", current_celltype)) == TRUE) %>% 
+          select(gene_id) %>% 
+          mutate(mark = current_mark,
+                 celltype = current_celltype, 
+                 hit_threshold    = ba_threshold_options$ba_hit_threshold[i],
+                 nonhit_threshold = ba_threshold_options$ba_nonhit_threshold[i],
+                 .before = 1)
+        
+        
+      }) %>% do.call("bind_rows", .)
+    }) %>% do.call("bind_rows", .)
+  }) %>% do.call("bind_rows", .)
+
+# Get GO term results for all thresholds
+# Loop
+ba_whole_genome_anno_chr_all_prom_bayes_consistent_overlap_exclusive_hits_by_threshold_go_results <- 
+  lapply(seq_along(rownames(ba_threshold_options)), function(i) {
+    lapply(vector_marks, function(current_mark) {
+      lapply(vector_celltypes, function(current_celltype) {
+        
+        # Filter genes by mark/celltype/threshold criteria and run through gprofiler2
+        ba_whole_genome_anno_chr_all_prom_bayes_consistent_overlap_exclusive_hits_by_threshold %>% 
+          filter(mark == current_mark,
+                 celltype == current_celltype,
+                 hit_threshold == ba_threshold_options$ba_hit_threshold[i],
+                 nonhit_threshold == ba_threshold_options$ba_nonhit_threshold[i]) %>% 
+          pull(gene_id) %>% 
+          unique() %>% 
+          gost() %>% 
+          `$`(result) %>% 
+          as_tibble() %>% 
+          mutate(mark = current_mark %>% factor(vector_marks),
+                 celltype = current_celltype %>% factor(vector_celltypes),
+                 hit_threshold = ba_threshold_options$ba_hit_threshold[i],
+                 nonhit_threshold = ba_threshold_options$ba_nonhit_threshold[i],
+                 .before = 1)
+        
+      }) %>% do.call("bind_rows", .)
+    }) %>% do.call("bind_rows", .)
+  }) %>% do.call("bind_rows", .)
+
+# Analyze hits
+ba_whole_genome_anno_chr_all_prom_bayes_consistent_overlap_exclusive_hits_by_threshold_go_results_prepped <- 
+  ba_whole_genome_anno_chr_all_prom_bayes_consistent_overlap_exclusive_hits_by_threshold_go_results %>% 
+  mutate(minus_log10_p_value = -log10(p_value)) %>% 
+  filter(mark %in% vector_marks_active, 
+         celltype %in% c("LC", "LP", "BC"), 
+         hit_threshold >= 0.66) %>% 
+  distinct(mark, celltype, term_id, term_name, .keep_all = TRUE) %>% 
+  arrange(mark, celltype, p_value) %>% 
+  mutate(term_name_ordered = term_name %>% factor(rev(term_name)), .after = term_name)
+
+# ba_whole_genome_anno_chr_all_prom_bayes_consistent_overlap_exclusive_hits_by_threshold_go_results_prepped_v2 <-
+#   ba_whole_genome_anno_chr_all_prom_bayes_consistent_overlap_exclusive_hits_by_threshold_go_results %>%
+#   mutate(minus_log10_p_value = -log10(p_value)) %>%
+#   filter(mark %in% vector_marks_active,
+#          hit_threshold >= 0.35) %>%
+#   distinct(mark, celltype, term_id, term_name, .keep_all = TRUE) %>%
+#   arrange(mark, celltype, p_value) %>%
+#   mutate(term_name_ordered = term_name %>% factor(rev(term_name)), .after = term_name)
+
+# Plot all
+ba_whole_genome_anno_chr_all_prom_bayes_consistent_overlap_exclusive_hits_by_threshold_go_results_prepped %>% 
+  ggplot(aes(x = term_name_ordered, y = minus_log10_p_value, fill = celltype)) +
+  geom_bar(stat = "identity", width = 0.5, position = "dodge") +
+  # geom_hline(yintercept = -log10(0.05), color = "black", linetype = "dotted") +
+  # facet_grid(rows = vars(mark), scales = "free_y", space = "free_y", switch = "both") +
+  ggh4x::facet_nested(rows = vars(mark, celltype), scales = "free_y", space = "free_y", switch = "both") +
+  coord_flip() +
+  scale_x_discrete(position = "top") +
+  scale_y_reverse() +
+  scale_fill_manual(values = vector_celltype_colors) +
+  labs(x = element_blank(),
+       y = expression(paste("−log10(", italic("p"), "-value)")),
+       fill = "cell type") +
+  theme_bw() +
+  theme(legend.position = "none", 
+        panel.grid.major.x = element_blank(), 
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(), 
+        panel.grid.minor.y = element_blank())
+ggsave("plots/paper_fig.2e_barplot_gprofiler2_promoter_go_terms_v2_all_marks_v1.png",
+       units = "in",
+       dpi = 600,
+       width  = 5.60 * 0.98,
+       height = 6.00 * 0.98)
+```
+
+# Fig. 2e Top hits to discuss in text
+```{r}
+# Get exclusive hit gene lists
+# Thresholds
+ba_hit_threshold    <- 1
+ba_nonhit_threshold <- 0
+
+# Loop
+ba_whole_genome_anno_chr_all_prom_bayes_consistent_exclusive_genes <- 
+  lapply(vector_marks, function(current_mark) {
+    lapply(vector_celltypes, function(current_celltype) {
+      
+      # Get current excluded celltypes
+      current_excluded_celltypes <- 
+        vector_celltypes %>% 
+        str_subset(current_celltype, negate = TRUE)
+      
+      # Return gene ids
+      ba_whole_genome_anno_chr_all_prom_bayes_cat_overlaps_binarized %>%
+        mutate("exclusive_hit_{current_mark}_{current_celltype}" := 
+                 if_else(((get(str_c("bayes_category_",   current_mark, "_", current_celltype,              "_", "consistent")) >= ba_hit_threshold) &
+                            (get(str_c("bayes_category_", current_mark, "_", current_excluded_celltypes[1], "_", "consistent")) <= ba_nonhit_threshold) &
+                            (get(str_c("bayes_category_", current_mark, "_", current_excluded_celltypes[2], "_", "consistent")) <= ba_nonhit_threshold) &
+                            (get(str_c("bayes_category_", current_mark, "_", current_excluded_celltypes[3], "_", "consistent")) <= ba_nonhit_threshold)), TRUE, FALSE)) %>% 
+        select(last_col())
+      
+    }) %>% do.call("bind_cols", .)
+  }) %>% do.call("bind_cols", .) %>% 
+  bind_cols(ba_whole_genome_anno_chr_all_prom_bayes_cat_overlaps_binarized %>% select(gene_id, ends_with("consistent")), .)
+
+###########################################################################################
+###########################################################################################
+# Check enriched GO terms for top hits
+# For manual lookup!!
+###########################################################################################
+###########################################################################################
+
+# Add gene names
+ba_whole_genome_anno_chr_all_prom_bayes_consistent_exclusive_genes_named <-
+  ba_whole_genome_anno_chr_all_prom_bayes_consistent_exclusive_genes %>% 
+  left_join(ba_quick_hgnc_symbol_key, by = join_by(gene_id == ensembl_gene_id)) %>% 
+  relocate(hgnc_symbol, .before = 1)
+
+# Process for lookup
+ba_whole_genome_anno_chr_all_prom_bayes_consistent_exclusive_genes_named_prepped <- 
+  ba_whole_genome_anno_chr_all_prom_bayes_consistent_exclusive_genes_named %>% 
+  mutate(number_of_hits = ba_whole_genome_anno_chr_all_prom_bayes_consistent_exclusive_genes_named %>% select(starts_with("exclusive")) %>% rowSums(), 
+         .after = "gene_id") %>% 
+  select(hgnc_symbol, gene_id, number_of_hits, starts_with("exclusive_hit_")) %>% 
+  filter(number_of_hits >= 1) %>% 
+  pivot_longer(cols = starts_with("exclusive_hit_"), 
+               names_to = "modality", 
+               names_prefix = "exclusive_hit_", 
+               values_to = "is_exclusive_hit") %>% 
+  separate_wider_delim(cols = modality,
+                       delim = "_",
+                       names = c("mark", "celltype")) %>% 
+  filter(is_exclusive_hit == TRUE,
+         !is.na(hgnc_symbol)) %>% 
+  select(-is_exclusive_hit) %>% 
+  mutate(mark = mark %>% factor(vector_marks),
+         celltype = celltype %>% factor(vector_celltypes)) %>% 
+  arrange(desc(number_of_hits), mark, celltype)
+
+# Check that top hits are also overexpressed in given cell type
+mclapply(seq_along(rownames(ba_whole_genome_anno_chr_all_prom_bayes_consistent_exclusive_genes_named_prepped)), function(current_row) {
+  
+  # Get current gene symbol & ENSG
+  current_gene_symbol  <- ba_whole_genome_anno_chr_all_prom_bayes_consistent_exclusive_genes_named_prepped$hgnc_symbol[current_row]
+  current_ensg         <- ba_whole_genome_anno_chr_all_prom_bayes_consistent_exclusive_genes_named_prepped$gene_id[current_row]
+  current_hit_mark     <- ba_whole_genome_anno_chr_all_prom_bayes_consistent_exclusive_genes_named_prepped$mark[current_row]
+  current_hit_celltype <- ba_whole_genome_anno_chr_all_prom_bayes_consistent_exclusive_genes_named_prepped$celltype[current_row]
+  
+  # Get current rpkms tibble
+  current_rpkms_tibble <- 
+    rpkm_matrix_long %>% 
+    filter(ENSG == current_ensg,
+           celltype %in% vector_celltypes) %>% 
+    mutate(celltype = celltype %>% factor(vector_celltypes)) %>% 
+    mutate(celltype_hit = ifelse(celltype == current_hit_celltype, "True", " ") %>% factor(c("True", " ")))
+  
+  # Plot
+  current_rpkms_tibble %>% 
+    ggplot(aes(x = celltype, y = RPKM)) +
+    geom_rect(aes(xmin = as.integer(celltype)-0.5, xmax = as.integer(celltype)+0.5, ymin = 0, ymax = max(RPKM), fill = celltype_hit),
+              inherit.aes = TRUE) +
+    scale_fill_manual(values = c("True" = "#fffba1", " " = "transparent"), 
+                      name = str_c("stable ", current_hit_mark, "\nat", " gene promoter")) +
+    ggnewscale::new_scale_fill() +
+    geom_boxplot(aes(fill = celltype)) +
+    scale_fill_manual(values = vector_celltype_colors_light, 
+                      guide = "none") +
+    scale_color_manual(values = "black") +
+    geom_point() +
+    ylim(c(0, max(current_rpkms_tibble$RPKM))) +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position = "none",
+          panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor.y = element_blank()) +
+    labs(title    = substitute(italic(x), list(x = current_gene_symbol)),
+         x        = element_blank(),
+         y        = "gene expression (RPKM)")
+  ggsave(str_c("plots/ba_gene_stable_prom_mark_expr_", current_hit_mark, "_", current_hit_celltype, "_", current_gene_symbol, "_rank_", sprintf("%03d", current_row), ".png"),
+         units = "in",
+         dpi    = 600,
+         width  = 2.00 * 1,
+         height = 3.00 * 1)
+  
+}, mc.cores = 100)
+```
+
+## 8.4 universalmotif PWM display of previous homer results
+```{r}
+# Get top 5 results for modality
+ba_homer_result_dir <- "output/homer/"
+
+# Get paths
+# Read homer
+# Merge similar
+lapply(vector_modalities, function(current_modality) {
+  lapply(ba_variability_categories_nonabsent %>% str_replace(" ", "_"), function(current_ba_var_cat) {
+    
+    # Grab motif files in modality-appropriate homer folder
+    # Natural sort, where top motifs are highest (overcoming lack of leading zeros)
+    # read_homer to turn homer motif file into universalmotif object, as list
+    # Merge similar motifs
+    # Select top 5
+    # Plot using view_motifs & save
+    list.files(str_c(ba_homer_result_dir, current_modality, "_", current_ba_var_cat, "/knownResults"), pattern = "*motif$", full.names = TRUE) %>% # Select .motif files
+      gtools::mixedsort() %>% # Perform natural sort so that, for example, known2.motif comes before known10.motif
+      lapply(function(x) read_homer(x)) %>% # From sorted vector of paths (where 1st path is the most-enriched), apply read_homer to each element to save the .motif file into a universalmotif motif R object
+      merge_similar(threshold = 0.90) %>% # Merge similar motifs in the list of motif objects created by previous steps to remove redundant motifs
+      `[`(1:3) %>% # Select top 3
+      view_motifs(show.positions = FALSE, show.names = TRUE, names.pos = "top") # Plot top 3
+    ggsave(str_c("plots/paper_fig.2f_universalmotifs_", current_modality, "_", current_ba_var_cat, "_names_pos_top.png"),
+           units = "in",
+           dpi = 600,
+           width =  2.2 * 2.55,
+           height = 1   * 2.55)
+  })
+})
+```
+
+
+# Ted question
+```{r}
+ba_consistent_overlaps <- tibble()
+
+for (current_feature in c("promoter", "enhancer_pellacani")) {
+  for (current_mark in vector_marks) {
+    
+    current_mark_consistent_matrix <- 
+      ba_whole_genome_anno_chr_all %>% 
+      as_tibble() %>% 
+      filter(get(current_feature) == TRUE) %>% 
+      select(starts_with(str_c("bayes_category_", current_mark))) %>% 
+      map_df(function(x) ifelse(x == "consistent", TRUE, FALSE))
+    
+    for (current_celltype in vector_celltypes) {
+      
+      current_tibble <-
+        current_mark_consistent_matrix %>% 
+        filter(get(str_c("bayes_category_", current_mark, "_", current_celltype)) == TRUE) %>% 
+        rowSums() %>% 
+        table() %>% 
+        `/`(sum(.)) %>% 
+        as_tibble() %>% 
+        setNames(c("number_celltypes_stable_at_locus", "fraction_loci")) %>% 
+        mutate(feature = current_feature,
+               mark = current_mark %>% factor(vector_marks),
+               celltype = current_celltype %>% factor(vector_celltypes),
+               .before = 1)
+      
+      # Add
+      ba_consistent_overlaps <- bind_rows(ba_consistent_overlaps, current_tibble)
+      
+      # Progress
+      message(str_c(timestamp(quiet = TRUE), "Done with", current_feature, current_mark, current_celltype, sep = " "))
+      
+    }
+  }
+}
+
+ba_consistent_overlaps_prepped <-
+  ba_consistent_overlaps %>% 
+  mutate(feature_v2 = case_when(feature == "promoter" ~ "promoters",
+                                feature == "enhancer_pellacani" ~ "enhancers") %>% factor(c("promoters", "enhancers")), .after = feature) %>% 
+  mutate(number_celltypes_description = case_when(number_celltypes_stable_at_locus == 1 ~ "stable only in current cell type",
+                                                  number_celltypes_stable_at_locus == 2 ~ "stable in 1 other cell type",
+                                                  number_celltypes_stable_at_locus == 3 ~ "stable in 2 other cell types",
+                                                  number_celltypes_stable_at_locus == 4 ~ "stable in all other cell types") %>% factor(c("stable only in current cell type",
+                                                                                                                                         "stable in 1 other cell type",
+                                                                                                                                         "stable in 2 other cell types",
+                                                                                                                                         "stable in all other cell types")), .after = number_celltypes_stable_at_locus)
+
+ba_consistent_overlaps_prepped %>% 
+  filter(mark %in% vector_marks_fig2) %>% 
+  ggplot(aes(x = "", y = fraction_loci, fill = number_celltypes_description)) +
+  ggh4x::facet_nested(rows = vars(celltype), cols = vars(mark, feature_v2)) +
+  geom_col() +
+  coord_polar("y", start = 0) +
+  scale_fill_viridis_d() +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(), 
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(), 
+        panel.grid.minor.y = element_blank(),
+        axis.ticks = element_blank(), 
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank()) +
+  labs(x = element_blank(),
+       y = element_blank(),
+       fill = "cell type-specificity\nof stable regions")
+ggsave("plots/ba_consistent_overlaps_pie_charts.png",
+       units = "in",
+       dpi = 600,
+       width  = 15,
+       height = 6)
+```
+
+
+
+

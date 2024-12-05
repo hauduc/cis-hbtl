@@ -1,0 +1,632 @@
+---
+title: "Cohort Clustering v7"
+output: html_notebook
+---
+```{r}
+#!/gsc/software/linux-x86_64-centos7/R-4.1.3/lib64/R/bin/R
+# R 4.1.3
+# x86_64-centos7-linux-gnu
+# Load packages and objects
+source("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/source/setup.R")
+```
+
+# Read in req'd files
+```{r}
+list_peak <- readRDS("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/objects/list_peak.RDS")
+```
+
+# Create ROI (regions of interest) GRanges
+```{r}
+# Blacklist
+blacklist_encode <- 
+  read_bed("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/blacklists/hg38-blacklist.v2.bed") %>% 
+  keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+
+# Promoters
+roi_promoters <- 
+  TxDb.Hsapiens.UCSC.hg38.knownGene %>% 
+  promoters(upstream = 2000, downstream = 200) %>% 
+  keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse") %>% 
+  reduce_ranges()
+
+# Enhancers
+roi_enhancers <- 
+  readxl::read_excel("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/data/1-s2.0-S2211124716314784-mmc6.xlsx") %>% 
+  makeGRangesFromDataFrame(keep.extra.columns = TRUE, 
+                           ignore.strand = TRUE,
+                           starts.in.df.are.0based = TRUE,
+                           seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38)) %>%
+  keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse") %>%
+  reduce_ranges()
+
+# Genes
+roi_genes <- 
+  TxDb.Hsapiens.UCSC.hg38.knownGene %>% 
+  genes() %>% 
+  keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse") %>% 
+  reduce_ranges() %>% 
+  tile_ranges(width = 200) # tile genes by 200bp
+```
+
+# Make cohort ROI data-filled table - fraction overlap strategy
+```{r}
+make_cohort_roi_table_fraction_overlap <- 
+  function(mark, rois, blacklist_regions_gr = blacklist_encode) {
+    # Establish tiled regions of interest GRanges
+    # Remove blacklisted areas
+    rois_filtered <- 
+      rois %>% 
+      keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse") %>%
+      filter_by_non_overlaps(blacklist_regions_gr)
+    
+    # Tile promoter ranges into 150bp tiles
+    # Previously, you used tile_ranges(width = 150) to split existing features into 150bp tiles
+    # However, now you are simply adding a tile_id column and each tile corresponds to one of the original features (promoter/enhancer, etc...)
+    rois_filtered_tiled <-
+      rois_filtered %>% 
+      #tile_ranges(width = 150) %>% 
+      plyranges::mutate(tile_id = seq_along(.))
+    
+    # Create table containing peak overlap fraction in tiles for entire cohort
+    for (current_sample in names(list_peak[[mark]])) {
+      # Read in bigWig corresponding to current sample being worked on
+      current_peaks <- list_peak[[mark]][[current_sample]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+      
+      # Do a raw overlap keeping all metadata
+      raw_overlap <- join_overlap_intersect(rois_filtered_tiled, current_peaks)
+      
+      # Create a tibble with tile_id as key and peak intersection width as value
+      # For the tile_ids intersecting multiple separate peaks, group by tile_id and sum total tile_id width covered
+      raw_overlap_widths <- 
+        tibble(tile_id                   = raw_overlap$tile_id,
+               peak_intersection_width   = raw_overlap %>% width()) %>% 
+        group_by(tile_id) %>% 
+        summarize(peak_intersection_width_total = sum(peak_intersection_width))
+      
+      # Left join peak intersection widths on tile_id of original tiles
+      current_peaks_fraction_overlap_column <-
+        rois_filtered_tiled %>% 
+        as_tibble() %>% 
+        left_join(raw_overlap_widths, by = "tile_id") %>% 
+        mutate(peak_intersection_width_total = replace_na(peak_intersection_width_total, 0)) %>% # Replace no-hit tiles with 0 overlap width
+        mutate(fraction_overlap = peak_intersection_width_total/width) %>% 
+        pull(fraction_overlap)
+      
+      # Add mean pileup depth per tile for current sample to rois_filtered_tiled as a new column
+      rois_filtered_tiled <- 
+        rois_filtered_tiled %>% 
+        plyranges::mutate("{current_sample}" := current_peaks_fraction_overlap_column)
+    }
+    # Return completed table
+    rois_filtered_tiled
+  }
+```
+
+# Calculate variance metrics for each roi tile
+# In order to get a final GRanges containing most important ranges for each mark to be used for clustering
+```{r}
+# Calculate (rowwise) mean, relative standard deviation (RSD), and variance-to-mean ratio for each tile
+# Testing on H3K4me3
+make_n_top_varying_regions_from_cohort_roi_table_for_fraction_overlap <- 
+  function(rois_filtered_tiled, n_regions = 1000) {
+    # Single-shot process on rois table filled with bigWig information
+    rois_filtered_tiled %>% 
+      as_tibble() %>% 
+      rowwise() %>% # Calculate rowwise for each tile
+      mutate(samples_sd_ind_and_cl  = sd(c_across(Individual_1_BC:hTERT_L2)), .after = tile_id) %>% # Calculate RSD to find top-varying tiles, unaffected by mean
+      ungroup() %>% 
+      arrange(desc(samples_sd_ind_and_cl)) %>%  # choose top-varying regions
+      head(n_regions) %>% # Prioritize n top-varying regions and create GRanges containing just top-varying regions
+      select(-width, -strand) %>% # Make conversion to GRanges possible
+      makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, starts.in.df.are.0based = FALSE, seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38)) %>%
+      keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse") %>% 
+      sort() # Make back into proper sorted GRanges with hg38 genome and only canonical chromosomes
+  }
+```
+
+# Run functions on peak lists
+# Initialize main lists
+```{r}
+# Initialize sublists
+vector_rois <- c("promoters", "enhancers", "genes")
+
+# Apply function in parallel to all modalities
+rois_frac_overlap <- 
+  mclapply(vector_rois, function(current_roi) {
+    mclapply(vector_marks, function(current_mark) {
+      
+      make_cohort_roi_table_fraction_overlap(mark = current_mark, rois = get(str_c("roi_", current_roi))) %>%
+        make_n_top_varying_regions_from_cohort_roi_table_for_fraction_overlap(n_regions = 1000)
+      
+      
+    }, mc.cores = length(vector_marks)) %>% `names<-`(vector_marks)
+  }, mc.cores = length(vector_rois)) %>% `names<-`(vector_rois)
+```
+
+# Remove QC fail samples
+```{r}
+# QC fail samples currently included in data frames
+qc_fail_samples_table <-
+  tibble(histone_mark = c("H3K4me3",
+                          "H3K4me3",
+                          "H3K4me1",
+                          "H3K4me1",
+                          "H3K27me3",
+                          "H3K27me3",
+                          "H3K27me3",
+                          "H3K27me3",
+                          "H3K36me3",
+                          "H3K36me3",
+                          "H3K36me3",
+                          "H3K36me3"),
+         sample       = c("Individual_2_BC",
+                          "Individual_2_LC",
+                          "Individual_2_LP",
+                          "Individual_2_SC",
+                          "Individual_2_BC",
+                          "Individual_2_LP",
+                          "Individual_2_LC",
+                          "Individual_2_SC",
+                          "Individual_2_BC",
+                          "Individual_2_LP",
+                          "Individual_2_LC",
+                          "Individual_2_SC"))
+
+missing_samples_table <-
+  tibble(histone_mark = c("H3K9me3"),
+         sample       = c("Individual_6_BC"))
+
+# Run through data and remove QC fail samples
+# Loop and plot through all modalities
+for (current_roi in vector_rois) {
+  for (i_qc_fail_row in seq_along(rownames(qc_fail_samples_table))) {
+    
+    # Main function
+    rois_frac_overlap[[current_roi]][[qc_fail_samples_table$histone_mark[i_qc_fail_row]]] <- 
+      rois_frac_overlap[[current_roi]][[qc_fail_samples_table$histone_mark[i_qc_fail_row]]] %>%
+      plyranges::select(-qc_fail_samples_table$sample[i_qc_fail_row])
+  }
+}
+```
+
+# Dendextend
+# Set group label names
+```{r}
+# Cell types
+labels_LC <- c("Ind. 1 LC", "Ind. 2 LC", "Ind. 3 LC", "Ind. 4 LC", "Ind. 5 LC", "Ind. 6 LC", "Ind. 7 LC", "Ind. 8 LC")
+labels_LP <- c("Ind. 1 LP", "Ind. 2 LP", "Ind. 3 LP", "Ind. 4 LP", "Ind. 5 LP", "Ind. 6 LP", "Ind. 7 LP", "Ind. 8 LP")
+labels_BC <- c("Ind. 1 BC", "Ind. 2 BC", "Ind. 3 BC", "Ind. 4 BC", "Ind. 5 BC", "Ind. 6 BC", "Ind. 7 BC", "Ind. 8 BC")
+labels_SC <- c("Ind. 1 SC", "Ind. 2 SC", "Ind. 3 SC", "Ind. 4 SC", "Ind. 5 SC", "Ind. 6 SC", "Ind. 7 SC", "Ind. 8 SC")
+labels_CL <- c("MCF10A", "hTERT-L9", "hTERT-L2")
+
+# All (used for ordered tree rotation)
+labels_all <- c(labels_LC, labels_LP, labels_BC, labels_SC, labels_CL) %>% rev()
+```
+
+# Plot using dendextend and pvclust main function
+```{r}
+# Function to compute fractional overlaps of features for any given mark + region of interest (i.e. promoter/enhancer) combination
+run_frac_overlap_cluster_spearman_complete <- 
+  function(frac_overlap_obj) {
+    
+    frac_overlap_obj %>%
+      mcols() %>%
+      as_tibble() %>%
+      select(starts_with("Individual_"), MCF10A, hTERT_L9, hTERT_L2) %>%
+      rename_with(~ stringr::str_replace_all(.x, pattern = "_", replacement = " "), starts_with("Individual")) %>%
+      rename_with(~ stringr::str_replace_all(.x, pattern = "Individual", replacement = "Ind."), everything()) %>%
+      rename_with(~ stringr::str_replace_all(.x, pattern = "_", replacement = "-"), starts_with("hTERT")) %>%
+      cor(use = "complete.obs", method = "spearman") %>%
+      {as.dist(1 - .)} %>% 
+      hclust(method = "complete") %>%
+      as.dendrogram() %>% 
+      branches_attr_by_labels(labels = labels_BC, type = "any", attr = "col", vector_celltype_colors["BC"]) %>%
+      branches_attr_by_labels(labels = labels_LP, type = "any", attr = "col", vector_celltype_colors["LP"]) %>%
+      branches_attr_by_labels(labels = labels_LC, type = "any", attr = "col", vector_celltype_colors["LC"]) %>%
+      branches_attr_by_labels(labels = labels_SC, type = "any", attr = "col", vector_celltype_colors["SC"]) %>%
+      branches_attr_by_labels(labels = labels_CL, type = "any", attr = "col", "#009966") %>%
+      set("labels_cex", 0.6) %>%
+      set("branches_lwd", 2.2) %>%
+      rotate(order = labels(.) %>% factor(levels = labels_all) %>% sort() %>% as.character())
+  }
+
+# Same as above but using pvclust
+run_frac_overlap_pvclust <- 
+  function(frac_overlap_obj) {
+    # Run pvclust with correct 
+    frac_overlap_obj %>%
+      mcols() %>%
+      as_tibble() %>%
+      select(starts_with("Individual_"), MCF10A, hTERT_L9, hTERT_L2) %>%
+      rename_with(~ stringr::str_replace_all(.x, pattern = "_", replacement = " "), starts_with("Individual")) %>%
+      rename_with(~ stringr::str_replace_all(.x, pattern = "Individual", replacement = "Ind."), everything()) %>%
+      rename_with(~ stringr::str_replace_all(.x, pattern = "_", replacement = "-"), starts_with("hTERT")) %>% 
+      pvclust(method.dist = function(x) x %>% cor(use = "complete.obs", method = "spearman") %>% {as.dist(1 - .)},
+              method.hclust = "complete",
+              use.cor = "complete.obs")
+  }
+```
+
+# Plot all using dendextend method
+```{r}
+# Apply in parallel
+rois_frac_overlap_dend <- 
+  mclapply(vector_rois, function(current_roi) {
+    mclapply(vector_marks, function(current_mark) {
+      
+      # Main function
+      rois_frac_overlap[[current_roi]][[current_mark]] %>% run_frac_overlap_cluster_spearman_complete()
+      
+    }, mc.cores = length(vector_marks)) %>% `names<-`(vector_marks)
+  }, mc.cores = length(vector_rois)) %>% `names<-`(vector_rois)
+
+# Plot (looped)
+for (current_mark in vector_marks) {
+  for (current_roi in vector_rois) {
+    
+    # Plot matrix clustering
+    png(str_c("plots/paper_fig.1", "_", current_roi, "_", current_mark, "_dendrogram_dendextend_histones_top_1000_", ".png"),
+        units  = "in",
+        res    = 600,
+        width  = 5,
+        height = 6,)
+    
+    # Main function
+    rois_frac_overlap_dend[[current_roi]][[current_mark]] %>% plot(horiz = TRUE)
+    
+    # Device off
+    dev.off()
+    
+    # Report progress
+    message(timestamp(quiet = TRUE), " Done with ", current_mark, " ", current_roi)
+  }
+}
+
+# Run pvclust
+# Apply in parallel
+rois_frac_overlap_pvclust <- 
+  mclapply(vector_rois, function(current_roi) {
+    mclapply(vector_marks, function(current_mark) {
+      
+      # Main function
+      rois_frac_overlap[[current_roi]][[current_mark]] %>% run_frac_overlap_pvclust()
+      
+    }, mc.cores = length(vector_marks)) %>% `names<-`(vector_marks)
+  }, mc.cores = length(vector_rois)) %>% `names<-`(vector_rois)
+
+# Plot pvclust (looped)
+for (current_mark in vector_marks) {
+  for (current_roi in vector_rois) {
+    
+    # Plot matrix clustering
+    png(str_c("plots/dendrogram_pvclust_histones_top_1000_", current_roi, "_", current_mark, ".png"),
+        width  = 7.5,
+        height = 9,
+        units  = "in",
+        res    = 600)
+    
+    # Main function
+    rois_frac_overlap_pvclust[[current_roi]][[current_mark]] %>% plot()
+    
+    # Device off
+    dev.off()
+    
+    # Report progress
+    message(timestamp(quiet = TRUE), " Done with ", current_mark, " ", current_roi)
+  }
+}
+```
+
+# #############
+# RNA
+# Generate table of RPKMs for all individuals
+```{r}
+# Initialize tibble
+rpkm_paths <- tibble()
+
+# Read in all rpkm paths
+for (current_celltype in vector_celltypes) {
+  # Read in current rpkm paths
+  current_rpkm_path <- 
+    read_tsv(str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/scripts/filelists/rpkm/breast_normal_rpkms_", current_celltype, ".tsv"), 
+             col_names = FALSE, show_col_types = FALSE, progress = FALSE) %>%
+    mutate(sample = str_c("Ind.", vector_individuals_encoded_numbers, current_celltype, sep = " "), .before = 1) %>% 
+    rename(filepath = X1)
+  
+  # Add to tibble
+  rpkm_paths <- bind_rows(rpkm_paths, current_rpkm_path)
+}
+
+rpkm_paths <-
+  bind_rows(rpkm_paths,
+            tibble(sample = 
+                     c("MCF10A", 
+                       "hTERT-L9", 
+                       "hTERT-L2"),
+                   filepath = 
+                     c("/projects/edcc_new/reference_epigenomes/CEMT_7/hg38/RNA-Seq/hg38.A24901.CEMT_7.RNA.hg38.C2A6RACXX_5_TGCTGG/A24901.CEMT_7.RNA.hg38.C2A6RACXX_5_TGCTGG_withJunctionsOnGenome_dupsFlagged/coverage/A24901.CEMT_7.RNA.hg38.C2A6RACXX_5_TGCTGG_withJunctionsOnGenome_dupsFlagged.G.A.rpkm.pc",
+                       "/projects/edcc_new/reference_epigenomes/CEMT_8/hg38/RNA-Seq/hg38.A24902.CEMT_8.RNA.hg38.C2A6RACXX_6_CCGTCC/A24902.CEMT_8.RNA.hg38.C2A6RACXX_6_CCGTCC_withJunctionsOnGenome_dupsFlagged/coverage/A24902.CEMT_8.RNA.hg38.C2A6RACXX_6_CCGTCC_withJunctionsOnGenome_dupsFlagged.G.A.rpkm.pc",
+                       "/projects/edcc_new/reference_epigenomes/CEMT_9/hg38/RNA-Seq/hg38.A24903.CEMT_9.RNA.hg38.C2A6RACXX_7_TGACCA/A24903.CEMT_9.RNA.hg38.C2A6RACXX_7_TGACCA_withJunctionsOnGenome_dupsFlagged/coverage/A24903.CEMT_9.RNA.hg38.C2A6RACXX_7_TGACCA_withJunctionsOnGenome_dupsFlagged.G.A.rpkm.pc"
+                     )))
+
+# Use key to read in files and turn the RPKM counts into a matrix
+# Initialize tibble with ENSGs as the first column (these are the same across all your RPKM files)
+rpkm_matrix <- 
+  rpkm_paths$filepath[1] %>% 
+  read_tsv(col_names = FALSE, show_col_types = FALSE, progress = FALSE) %>% 
+  select(X1) %>% 
+  rename(ENSG = X1)
+
+# Add sample-specific columns to matrix
+for (i in seq_along(rpkm_paths$filepath)) {
+  # Dynamically add columns with total RPKM for each sample, with name of sample
+  rpkm_matrix <- rpkm_matrix %>% mutate("{rpkm_paths$sample[i]}" := rpkm_paths$filepath[i] %>% read_tsv(col_names = FALSE, show_col_types = FALSE, progress = FALSE) %>% pull(X3))
+}
+
+# Clustering RPKMs function
+calc_rpkm_correlation_hclust <- 
+  function(rpkm_matrix_tibble) {
+    # Calculate Spearman correlation
+    rpkm_matrix_tibble %>% 
+      select(-ENSG) %>% 
+      cor(use = "complete.obs", method = "spearman") %>%
+      {as.dist(1 - .)} %>% 
+      hclust() # Return hclust object of Spearman distances directly
+  }
+
+# pvclust analysis
+run_pvclust_rna <- 
+  function(rpkm_obj) {
+    
+    # Run pvclust with correct 
+    rpkm_obj %>%
+      select(-ENSG) %>%
+      pvclust(method.dist = function(x) x %>% cor(use = "complete.obs", method = "spearman") %>% {as.dist(1 - .)},
+              method.hclust = "complete",
+              use.cor = "complete.obs")
+  }
+
+# Run dendextend
+rpkm_matrix_pvclust <- 
+  rpkm_matrix %>% 
+  run_pvclust_rna()
+
+# Plot dendextend
+png(str_c("plots/paper_fig.1_rna_dendrogram_dendextend_rna_all_pc_genes.png"),
+    units  = "in",
+    res    = 600,
+    width  = 5,
+    height = 6)
+
+# Plot
+rpkm_matrix %>% 
+  calc_rpkm_correlation_hclust() %>%
+  as.dendrogram() %>% 
+  branches_attr_by_labels(labels = labels_BC, type = "any", attr = "col", "#3A68AE") %>%
+  branches_attr_by_labels(labels = labels_LP, type = "any", attr = "col", "#FF3739") %>%
+  branches_attr_by_labels(labels = labels_LC, type = "any", attr = "col", "#EB8353") %>%
+  branches_attr_by_labels(labels = labels_SC, type = "any", attr = "col", "#464546") %>%
+  branches_attr_by_labels(labels = labels_CL, type = "any", attr = "col", "#009966") %>%
+  set("labels_cex", 0.6) %>%
+  set("branches_lwd", 2.2) %>%
+  rotate(order = labels(.) %>% factor(levels = labels_all) %>% sort() %>% as.character()) %>% 
+  plot(horiz = TRUE)
+
+dev.off()
+
+# Plot pvclust
+# Plot matrix clustering
+png("plots/dendrogram_pvclust_all_pc_genes.png",
+    width  = 7.5,
+    height = 9,
+    units  = "in",
+    res    = 600)
+# Main function
+rpkm_matrix_pvclust %>% 
+  plot()
+dev.off()
+```
+
+# #########################################################################################################################################################################
+# Post-plotting analysis
+# #########################################################################################################################################################################
+# #########################################################################################################################################################################
+# #########################################################################################################################################################################
+# #########################################################################################################################################################################
+
+# Setup
+# Get correlation within/between groups
+# For paper paragraph section
+# Plot correlations within and between groups as box plots
+# All
+```{r}
+# Loop and plot through all modalities
+rois_frac_overlap_long_correlations <- 
+  mclapply(vector_rois, function(current_roi) {
+    mclapply(vector_marks, function(current_mark) {
+      
+      rois_frac_overlap[[current_roi]][[current_mark]] %>%
+        mcols() %>%
+        as_tibble() %>%
+        select(starts_with("Individual_"), MCF10A, hTERT_L9, hTERT_L2) %>% 
+        cor(use = "complete.obs", method = "spearman") %>%
+        as.data.frame() %>%
+        rownames_to_column(var = "sample1") %>%
+        pivot_longer(cols = -sample1,
+                     names_to = "sample2",
+                     values_to = "spearman_correlation") %>%
+        mutate(filter_label = "top_1000", 
+               feature = current_roi,
+               mark = current_mark,
+               .before = 1)
+      
+    }, mc.cores = length(vector_marks)) %>% do.call("bind_rows", .)
+  }, mc.cores = length(vector_rois)) %>% do.call("bind_rows", .)
+```
+
+# Plot correlation performances of within-cell type vs outside-cell type
+```{r}
+# Set up non-redundant comparisons between pools and individual samples of the same cell type
+# Plot all modalities
+rois_frac_overlap_long_correlations %>% 
+  filter(str_detect(sample1, "^Individual_") & str_detect(sample2, "^Individual_"), # ignore cell lines
+         sample1 != sample2) %>% # keep only comparisons that are not of the same sample
+  mutate(celltype_matches = if_else(str_sub(sample1, start = -2) == str_sub(sample2, start = -2), TRUE, FALSE ) %>% factor(c(TRUE, FALSE))) %>%
+  mutate(filter_label = filter_label %>% factor(c("all", "top_4000", "top_2000", "top_1000")),
+         feature = feature %>% factor(c("promoters", "enhancers", "genes")),
+         mark = mark %>% factor(vector_marks)) %>% 
+  ggplot(aes(x = celltype_matches, y = spearman_correlation)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.5) +
+  geom_boxplot() +
+  ggh4x::facet_nested(feature ~ mark + filter_label) +
+  ylim(-1, 1) +
+  theme_bw() +
+  labs(x = "cell type matches",
+       y = "spearman correlation of feature coverage")
+ggsave("plots/boxplot_rois_frac_overlap_pool_comparisons_all_v2.png",
+       units = "in",
+       dpi = 600,
+       width = 24,
+       height = 8)
+
+# Set up non-redundant comparisons between pools and individual samples of the same cell type
+# Plot top 1000 (on all modalities)
+rois_frac_overlap_long_correlations %>% 
+  filter(str_detect(sample1, "^Individual_") & str_detect(sample2, "^Individual_"), # ignore cell lines
+         sample1 != sample2) %>% # keep only comparisons that are not of the same sample
+  filter(filter_label == "top_1000") %>% 
+  mutate(celltype_matches = if_else(str_sub(sample1, start = -2) == str_sub(sample2, start = -2), TRUE, FALSE ) %>% factor(c(TRUE, FALSE))) %>%
+  mutate(feature = feature %>% factor(c("promoters", "enhancers", "genes")),
+         mark = mark %>% factor(vector_marks)) %>% 
+  ggplot(aes(x = celltype_matches, y = spearman_correlation)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.5) +
+  geom_boxplot() +
+  facet_grid(feature ~ mark) +
+  ylim(-1, 1) +
+  theme_bw() +
+  labs(x = "cell type matches",
+       y = "spearman correlation of feature coverage")
+ggsave("plots/boxplot_rois_frac_overlap_pool_comparisons_top_1000_v2.png",
+       units = "in",
+       dpi = 600,
+       width = 16,
+       height = 8)
+
+# Set up non-redundant comparisons between pools and individual samples of the same cell type
+# Plot top 1000 (on only relevant modalities)
+rois_frac_overlap_long_correlations %>% 
+  filter(str_detect(sample1, "^Individual_") & str_detect(sample2, "^Individual_"), # ignore cell lines
+         sample1 != sample2) %>% # keep only comparisons that are not of the same sample
+  filter(filter_label == "top_1000") %>% 
+  mutate(celltype_matches = if_else(str_sub(sample1, start = -2) == str_sub(sample2, start = -2), TRUE, FALSE ) %>% factor(c(TRUE, FALSE))) %>%
+  mutate(feature = feature %>% factor(c("promoters", "enhancers", "genes")),
+         mark = mark %>% factor(vector_marks)) %>%
+  filter((mark == "H3K4me3" & feature == "promoters") | # Keep only relevant combinations
+           (mark == "H3K27ac" & feature == "enhancers") |
+           (mark == "H3K4me1" & feature == "enhancers") |
+           (mark == "H3K9me3" & feature == "promoters") |
+           (mark == "H3K27me3" & feature == "promoters") |
+           (mark == "H3K36me3" & feature == "genes")) %>% 
+  ggplot(aes(x = celltype_matches, y = spearman_correlation)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.5) +
+  geom_boxplot() +
+  facet_grid(~ mark) +
+  ylim(-1, 1) +
+  theme_bw() +
+  labs(x = "cell type matches",
+       y = "spearman correlation of feature coverage")
+ggsave("plots/boxplot_rois_frac_overlap_pool_comparisons_top_1000_v3_relevant_modalities.png",
+       units = "in",
+       dpi = 600,
+       width = 10,
+       height = 5)
+
+# Summarize mean spearman correlations for relevant comparisons
+rois_frac_overlap_long_correlations %>% 
+  filter(str_detect(sample1, "^Individual_") & str_detect(sample2, "^Individual_"),
+         sample1 != sample2) %>% 
+  mutate(celltype_matches = if_else(str_sub(sample1, start = -2) == str_sub(sample2, start = -2), TRUE, FALSE ) %>% factor(c(TRUE, FALSE))) %>%
+  mutate(feature = feature %>% factor(c("promoters", "enhancers", "genes")),
+         mark = mark %>% factor(vector_marks)) %>% 
+  group_by(filter_label, feature, mark, celltype_matches) %>% 
+  summarize(mean_spearman_correlation = mean(spearman_correlation)) %>% 
+  filter(filter_label == "top_1000") %>% 
+  filter((mark == "H3K4me3" & feature == "promoters") | # Keep only relevant combinations
+           (mark == "H3K27ac" & feature == "enhancers") |
+           (mark == "H3K4me1" & feature == "enhancers") |
+           (mark == "H3K9me3" & feature == "promoters") |
+           (mark == "H3K27me3" & feature == "promoters") |
+           (mark == "H3K36me3" & feature == "genes")) %>% 
+  mutate(mark_category = case_when(mark %in% c("H3K4me3", "H3K27ac", "H3K4me1","H3K9me3", "H3K27me3") ~ "promoter/enhancer marks",
+                                   mark %in% c("H3K36me3") ~ "other marks") %>% factor(c("promoter/enhancer marks", "other marks"))) %>% 
+  ggplot(aes(x = celltype_matches, y = mean_spearman_correlation)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.5) +
+  geom_point() +
+  facet_grid(~ mark) +
+  ylim(-1, 1) +
+  theme_bw() +
+  labs(x = "cell type matches",
+       y = "mean Spearman correlation between samples")
+ggsave("plots/dotplot_correlation_performances.png",
+       units = "in",
+       dpi = 600,
+       width = 10,
+       height = 5)
+```
+
+# Get numbers for paper
+```{r}
+# Calculate spread in within vs outside cell type
+rois_frac_overlap_long_correlations %>% 
+  filter(str_detect(sample1, "^Individual_") & str_detect(sample2, "^Individual_"),
+         sample1 != sample2) %>% 
+  mutate(celltype_matches = if_else(str_sub(sample1, start = -2) == str_sub(sample2, start = -2), TRUE, FALSE ) %>% factor(c(TRUE, FALSE))) %>%
+  mutate(feature = feature %>% factor(c("promoters", "enhancers", "genes")),
+         mark = mark %>% factor(vector_marks)) %>% 
+  group_by(filter_label, feature, mark, celltype_matches) %>% 
+  summarize(mean_spearman_correlation = mean(spearman_correlation)) %>% 
+  filter(filter_label == "top_1000") %>% 
+  filter((mark == "H3K4me3" & feature == "promoters") | # Keep only relevant combinations
+           (mark == "H3K27ac" & feature == "enhancers") |
+           (mark == "H3K4me1" & feature == "enhancers") |
+           (mark == "H3K9me3" & feature == "promoters") |
+           (mark == "H3K27me3" & feature == "promoters") |
+           (mark == "H3K36me3" & feature == "genes")) %>% 
+  mutate(mark_category = case_when(mark %in% c("H3K4me3", "H3K27ac", "H3K4me1","H3K9me3", "H3K27me3") ~ "promoter/enhancer marks",
+                                   mark %in% c("H3K36me3") ~ "other marks") %>% factor(c("promoter/enhancer marks", "other marks"))) %>% 
+  pivot_wider(id_cols = c(filter_label, feature, mark, mark_category),
+              names_prefix = "is_within_same_cell_type_",
+              names_from = celltype_matches,
+              values_from = mean_spearman_correlation) %>% 
+  mutate(spearman_difference_betw_same_vs_diff_cell_type = is_within_same_cell_type_TRUE - is_within_same_cell_type_FALSE) %>% 
+  arrange(desc(spearman_difference_betw_same_vs_diff_cell_type))
+
+# Get mean based on category of mark
+# Calculate spread in within vs outside cell type
+rois_frac_overlap_long_correlations %>% 
+  filter(str_detect(sample1, "^Individual_") & str_detect(sample2, "^Individual_"),
+         sample1 != sample2) %>% 
+  mutate(celltype_matches = if_else(str_sub(sample1, start = -2) == str_sub(sample2, start = -2), TRUE, FALSE ) %>% factor(c(TRUE, FALSE))) %>%
+  mutate(feature = feature %>% factor(c("promoters", "enhancers", "genes")),
+         mark = mark %>% factor(vector_marks)) %>% 
+  group_by(filter_label, feature, mark, celltype_matches) %>% 
+  summarize(mean_spearman_correlation = mean(spearman_correlation)) %>% 
+  filter(filter_label == "top_1000") %>% 
+  filter((mark == "H3K4me3" & feature == "promoters") | # Keep only relevant combinations
+           (mark == "H3K27ac" & feature == "enhancers") |
+           (mark == "H3K4me1" & feature == "enhancers") |
+           (mark == "H3K9me3" & feature == "promoters") |
+           (mark == "H3K27me3" & feature == "promoters") |
+           (mark == "H3K36me3" & feature == "genes")) %>% 
+  mutate(mark_category = case_when(mark %in% c("H3K4me3", "H3K27ac", "H3K4me1","H3K9me3", "H3K27me3") ~ "promoter/enhancer marks",
+                                   mark %in% c("H3K36me3") ~ "other marks") %>% factor(c("promoter/enhancer marks", "other marks"))) %>% 
+  pivot_wider(id_cols = c(filter_label, feature, mark, mark_category),
+              names_prefix = "is_within_same_cell_type_",
+              names_from = celltype_matches,
+              values_from = mean_spearman_correlation) %>% 
+  mutate(spearman_difference_betw_same_vs_diff_cell_type = is_within_same_cell_type_TRUE - is_within_same_cell_type_FALSE) %>% 
+  arrange(desc(spearman_difference_betw_same_vs_diff_cell_type)) %>% 
+  group_by(mark_category) %>% 
+  summarize(mean_spearman_correlation_difference = mean(spearman_difference_betw_same_vs_diff_cell_type))
+```
+

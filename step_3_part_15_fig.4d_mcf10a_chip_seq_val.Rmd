@@ -1,0 +1,269 @@
+---
+title: "MCF10A browser views"
+output: html_notebook
+---
+## Upstream Analysis
+# Set constants
+```{r}
+# Load constants
+source("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/source/setup.R")
+```
+
+# Selection ranges
+```{r}
+# Regions of interest
+# rs75071948
+selection_range_rs75071948 <- 
+  readRDS("objects/validation_region_anxa1.RDS")
+
+ba_promoters_rpkm_anno <- readRDS("objects/ba_promoters_rpkm_anno.RDS")
+gencode_v43_basic      <- readRDS("objects/gencode_v43_basic.RDS")
+
+selection_range_rs75071948_window <- 
+  function(upstream, downstream) {
+    selection_range_rs75071948 %>% 
+      anchor_start() %>% 
+      stretch(downstream) %>% 
+      anchor_end() %>% 
+      stretch(upstream)
+  }
+
+# ANXA1 promoter
+selection_range_anxa1_promoter <- 
+  ba_promoters_rpkm_anno %>% 
+  plyranges::filter(hgnc_symbol == "ANXA1") %>% 
+  reduce_ranges()
+
+# ANXA1 TSS
+selection_range_anxa1_tss <-
+  gencode_v43_basic %>% 
+  plyranges::filter(gene_name == "ANXA1", type == "gene") %>% 
+  reduce_ranges() %>% 
+  tile_ranges(width = 1) %>% 
+  head(1)
+
+# ANXA1 gene body
+selection_range_anxa1_gene_body <-
+  gencode_v43_basic %>% 
+  plyranges::filter(gene_name == "ANXA1", type == "gene") %>% 
+  reduce_ranges()
+
+# Selection window
+selection_window <- 
+  selection_range_anxa1_gene_body %>% 
+  anchor_start() %>% 
+  stretch(5e3) %>% 
+  anchor_end() %>% 
+  stretch(5e3)
+```
+
+# Read in data
+```{r}
+# MCF10A filepath root
+mcf10a_filepaths_root <- "/projects/epigenomics3/epigenomics3_results/users/eglseq/UEX000500_NovaSeq_Run_11_PX3242/Axel_MCF10A_EGL-833/ChIP_Joon/hg38_no_alt/"
+
+mcf10a_identities <- c(str_c(rep("edited_", 3), 1:3), str_c(rep("wildtype_", 3), 1:3))
+
+mcf10a_bw_filepaths <-
+  tibble(identity = rep(mcf10a_identities, each = 2), 
+         library_type = rep(c("treatment", "input", "treatment", "input", "treatment", "input"), times = 2),
+         filepath = list.files(path = str_c(mcf10a_filepaths_root, "bw"), pattern = "*bw$", full.names = TRUE))
+
+# Read in MCF10A narrowPeak filepaths
+mcf10a_narrowPeak_filepaths <-
+  tibble(identity = mcf10a_identities, 
+         filepath = list.files(path = str_c(mcf10a_filepaths_root, "macs2"), pattern = "*.narrowPeak$", full.names = TRUE))
+
+# Read in as GRanges
+# Read in samples as GRanges
+# Peaks
+mcf10a_narrowPeaks <-
+  mclapply(mcf10a_narrowPeak_filepaths$filepath, function(current_narrowPeak) {
+    
+    read_narrowpeaks(current_narrowPeak) %>% 
+      keepSeqlevels(const_canonical_autosomes, pruning.mode = "coarse")
+    
+  }, mc.cores = length(mcf10a_narrowPeak_filepaths$filepath)) %>% `names<-`(mcf10a_narrowPeak_filepaths$identity)
+
+mcf10a_bam_filepaths <-
+  tibble(identity = rep(mcf10a_identities, each = 2), 
+         library_type = rep(c("treatment", "input", "treatment", "input", "treatment", "input"), times = 2),
+         filepath = list.files(path = str_c(mcf10a_filepaths_root, "bwa"), pattern = "*bam$", full.names = TRUE))
+
+# Select files to use
+mcf10a_bam_filepaths_deeptools <- 
+  mcf10a_bam_filepaths %>% 
+  filter(library_type == "treatment") %>% 
+  pull(filepath)
+
+# Deeptools coverage folder
+mcf10a_deeptols_cov_folder <-
+  "/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/mcf10a_chip_val/normalized_cov/"
+```
+
+# Depth calculation v2 (deeptools)
+```{r}
+# Establish settings
+current_mapq                <- 10
+current_normalization_strat <- "RPKM"
+current_extend_reads        <- TRUE
+current_exact_scaling       <- TRUE
+current_excl_flag           <- 3332
+current_bin_size            <- 1
+
+# Calculate bigWigs
+mclapply(mcf10a_bam_filepaths_deeptools, function(current_bam) {
+  
+  # System command
+  system(command = 
+           str_c("/home/ahauduc/anaconda3/condabin/conda run -n deeptools_env bamCoverage", 
+                 " --bam ",                current_bam, 
+                 " --outFileName ",        str_c(mcf10a_deeptols_cov_folder, 
+                                                 current_bam %>% 
+                                                   str_split_i(pattern = "/", i = -1) %>% 
+                                                   str_remove(".bam") %>% 
+                                                   str_c(".q", current_mapq, ".", "F", current_excl_flag, ".", current_normalization_strat, ifelse(isTRUE(current_exact_scaling), ".exactScaling", ""), ifelse(isTRUE(current_extend_reads), ".extendReads", ""), ".", "binSize", current_bin_size, ".bw")), 
+                 " --outFileFormat ",      "bigwig",
+                 " --minMappingQuality ",  current_mapq,
+                 " --samFlagExclude ",     current_excl_flag,
+                 " --normalizeUsing ",     current_normalization_strat,
+                 ifelse(isTRUE(current_exact_scaling), " --exactScaling", ""),
+                 ifelse(isTRUE(current_extend_reads),  " --extendReads",  ""),
+                 " --binSize ",            current_bin_size, 
+                 " --effectiveGenomeSize ", 2862010428 - ("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/blacklists/hg38-blacklist.v2.bed" %>% read_bed() %>% width() %>% sum()),
+                 " --blackListFileName ",  "/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/blacklists/hg38-blacklist.v2.bed",
+                 " --numberOfProcessors ", 24
+           )
+  )
+}, mc.cores = length(mcf10a_bam_filepaths_deeptools))
+```
+
+# Analyze data (p-values)
+```{r}
+# Establish sample names
+mcf10a_samples <-
+  tibble(treatment = c(rep("edited", 3), rep("wildtype", 3)),
+         identity = mcf10a_identities,
+         sample = c("MCF10A_100_2_1", "MCF10A_100_2_21", "MCF10A_100_2_50", "MCF10A_WT_1", "MCF10A_WT_2", "MCF10A_WT_3"),
+         filepath = str_c(mcf10a_deeptols_cov_folder, sample, "_H3K4me3.q10.F3332.RPKM.exactScaling.extendReads.binSize1.bw"))
+
+# Read in small window around area of interest to speed up processing
+mcf10a_samples_roi <- 
+  mclapply(mcf10a_samples$filepath, function(current_bam) {
+    
+    current_bam %>% 
+      read_bigwig() %>% 
+      join_overlap_intersect(selection_window) %>% 
+      keepSeqlevels(as.character(seqnames(selection_window)), pruning.mode = "coarse")
+    
+  }, mc.cores = length(mcf10a_samples$filepath)) %>% `names<-`(mcf10a_identities)
+
+# Set up receiving GRanges
+mcf10a_samples_roi_wide <- 
+  selection_window %>% 
+  tile_ranges(width = 1) %>% 
+  plyranges::select(-partition)
+
+# Calculate read depth for each sample type and add as column
+# Read depth is deeptools-adjusted score/50
+mcols(mcf10a_samples_roi_wide) <-   
+  mclapply(names(mcf10a_samples_roi), function(identity) {
+    
+    selection_window %>% 
+      tile_ranges(width = 1) %>% 
+      plyranges::select(-everything()) %>% 
+      join_overlap_intersect(mcf10a_samples_roi[[identity]]) %>% 
+      plyranges::mutate("{identity}" := score/50) %>% 
+      plyranges::select(-score) %>% 
+      mcols() %>% 
+      as_tibble()
+    
+  }, mc.cores = length(names(mcf10a_samples_roi))) %>% do.call("bind_cols", .)
+
+# Calculate means
+mcf10a_samples_roi_wide_anno <- 
+  mcf10a_samples_roi_wide %>% 
+  as_tibble() %>% 
+  mutate(edited_mean   = rowMeans(select(., c(edited_1, edited_2, edited_3))),
+         wildtype_mean = rowMeans(select(., c(wildtype_1, wildtype_2, wildtype_3)))) %>% 
+  as_granges()
+
+# Select rs75071948 region of interest and pull out read depths there
+mcf10a_rs75071948_normalized_read_depths <- 
+  mcf10a_samples_roi_wide_anno %>% 
+  join_overlap_intersect(selection_range_rs75071948) %>% 
+  as_tibble() %>% 
+  select(c(edited_1, edited_2, edited_3, wildtype_1, wildtype_2, wildtype_3)) %>% 
+  map_df(function(x) mean(x)) %>% 
+  pivot_longer(cols = everything(),
+               names_to = "identity",
+               values_to = "read_depth") %>% 
+  mutate(treatment = identity %>% str_split_i("_", 1), .before = 1)
+
+# Plot
+mcf10a_rs75071948_normalized_read_depths %>% 
+  mutate(treatment_v2 = case_when(treatment == "edited" ~ "edited",
+                                  treatment == "wildtype" ~ "control"),
+         .after = treatment) %>%
+  ggplot(aes(x = treatment_v2, y = read_depth)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point() +
+  ggsignif::geom_signif(comparisons = list(c("control", "edited")),
+                        test = "t.test", 
+                        map_signif_level = TRUE, 
+                        y_position = 71, 
+                        tip_length = 0.025) +
+  labs(x = element_blank(),
+       y = "H3K4me3 depth at rs75071948") +
+  scale_y_continuous(limits = c(0, 74), n.breaks = 8) +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(), 
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(), 
+        panel.grid.minor.y = element_blank())
+ggsave("plots/paper_fig.4d_mcf10a_rs75071948_normalized_read_depths.png",
+       units = "in",
+       dpi = 600,
+       width =  3.0 * 0.60,
+       height = 5.0 * 0.60)
+
+# t test on read depths
+t.test(x = mcf10a_rs75071948_normalized_read_depths %>% filter(treatment == "wildtype") %>% pull(read_depth),
+       y = mcf10a_rs75071948_normalized_read_depths %>% filter(treatment == "edited")   %>% pull(read_depth)) %>% 
+  broom::tidy()
+
+# # Select ANXA1 promoter region and pull out read depths there
+# mcf10a_ANXA1_promoter_normalized_read_depths_mean <- 
+#   mcf10a_samples_roi_wide_anno %>% 
+#   join_overlap_intersect(selection_range_anxa1_promoter) %>% 
+#   as_tibble() %>% 
+#   select(c(edited_1, edited_2, edited_3, wildtype_1, wildtype_2, wildtype_3)) %>% 
+#   map_df(function(x) mean(x)) %>% 
+#   pivot_longer(cols = everything(),
+#                names_to = "identity",
+#                values_to = "read_depth") %>% 
+#   mutate(treatment = identity %>% str_split_i("_", 1), .before = 1)
+# 
+# # t test on read depths
+# t.test(x = mcf10a_ANXA1_promoter_normalized_read_depths_mean %>% filter(treatment == "wildtype") %>% pull(read_depth),
+#        y = mcf10a_ANXA1_promoter_normalized_read_depths_mean %>% filter(treatment == "edited")   %>% pull(read_depth),
+#        alternative = "less")
+# 
+# # Select ANXA1 promoter region and pull out read depths there
+# mcf10a_ANXA1_tss_normalized_read_depths_mean <- 
+#   mcf10a_samples_roi_wide_anno %>% 
+#   join_overlap_intersect(selection_range_anxa1_tss) %>% 
+#   as_tibble() %>% 
+#   select(c(edited_1, edited_2, edited_3, wildtype_1, wildtype_2, wildtype_3)) %>% 
+#   map_df(function(x) mean(x)) %>% 
+#   pivot_longer(cols = everything(),
+#                names_to = "identity",
+#                values_to = "read_depth") %>% 
+#   mutate(treatment = identity %>% str_split_i("_", 1), .before = 1)
+# 
+# # t test on read depths
+# t.test(x = mcf10a_ANXA1_tss_normalized_read_depths_mean %>% filter(treatment == "wildtype") %>% pull(read_depth),
+#        y = mcf10a_ANXA1_tss_normalized_read_depths_mean %>% filter(treatment == "edited")   %>% pull(read_depth),
+#        alternative = "less")
+```
+

@@ -1,0 +1,944 @@
+---
+title: "Data Import - run first"
+output: html_notebook
+---
+```{r}
+# Load constants
+source("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/source/setup.R")
+```
+
+# Import BREAST COHORT VCFs into R
+```{r}
+# Read list of VCFs
+list_vcf_files <- read.table("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/filelists/vcf/breast_normal_vcfs.tsv") %>% pull()
+
+# Read VRanges into list_variant_calls
+list_variant_calls <- 
+  mclapply(seq_along(list_vcf_files), function(i) {
+    
+    readVcfAsVRanges(list_vcf_files[i]) %>%
+      as.data.frame() %>%
+      select(-width, -strand) %>%
+      makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38))
+    
+  }, mc.cores = length(seq_along(list_vcf_files))) %>% setNames(vector_individuals) %>% GRangesList()
+```
+
+# Load in VCALL cell line VCFs - not needed anymore
+```{r}
+# cl_variant_calls <- GRangesList()
+# 
+# cl_variant_calls$mcf10a <- 
+#   readVcfAsVRanges("/projects/analysis26/A24722/merge17358_bwa-mem-0.7.6a/100nt/hg38_no_alt/A24722_3_lanes_dupsFlagged.varFilter.eff.dbSNP_v146.COSMIC_v75.clinvar_20160104.annotations.vcf.gz") %>%
+#   as.data.frame() %>%
+#   select(-width, -strand) %>%
+#   makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38))
+# 
+# cl_variant_calls$htert_l9 <- 
+#   readVcfAsVRanges("/projects/analysis26/A24723/merge17354_bwa-mem-0.7.6a/100nt/hg38_no_alt/A24723_3_lanes_dupsFlagged.varFilter.eff.dbSNP_v146.COSMIC_v75.clinvar_20160104.annotations.vcf.gz") %>%
+#   as.data.frame() %>%
+#   select(-width, -strand) %>%
+#   makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38))
+# 
+# cl_variant_calls$htert_l2 <- 
+#   readVcfAsVRanges("/projects/analysis26/A24724/merge17355_bwa-mem-0.7.6a/100nt/hg38_no_alt/A24724_3_lanes_dupsFlagged.varFilter.eff.dbSNP_v146.COSMIC_v75.clinvar_20160104.annotations.vcf.gz") %>%
+#   as.data.frame() %>%
+#   select(-width, -strand) %>%
+#   makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38))
+```
+
+Load in YOUR PIPELINE cell line VCFs
+```{r}
+cl_pipeline_variant_calls <- GRangesList()
+
+cl_pipeline_variant_calls$mcf10a <-
+  readVcfAsVRanges("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/H3K4me3/MCF10A/wgs/MCF10A.recal_hard_filtered_phased_snvs.vcf.gz") %>%
+  as.data.frame() %>%
+  select(-width, -strand) %>%
+  makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38))
+
+cl_pipeline_variant_calls$htert_l9 <-
+  readVcfAsVRanges("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/H3K4me3/HTERT_L9/wgs/HTERT_L9.recal_hard_filtered_phased_snvs.vcf.gz") %>%
+  as.data.frame() %>%
+  select(-width, -strand) %>%
+  makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38))
+
+cl_pipeline_variant_calls$htert_l2 <-
+  readVcfAsVRanges("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/H3K4me3/HTERT_L2/wgs/HTERT_L2.recal_hard_filtered_phased_snvs.vcf.gz") %>%
+  as.data.frame() %>%
+  select(-width, -strand) %>%
+  makeGRangesFromDataFrame(keep.extra.columns = TRUE, ignore.strand = TRUE, seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38))
+```
+
+Import COHORT WASP PEAK CALL files into R as GRangesLists
+```{r}
+# Initialize list
+list_peak_wasp <- list()
+
+# Create list with the use of your filelists
+for (FILE in list.files("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/filelists/peak", full.names = TRUE)) {
+  # Pull out name and contents
+  NAME <- FILE %>% str_remove("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/filelists/peak/breast_normal_") %>% str_remove(".tsv")
+  PEAKS_VECTOR <- FILE %>% read.table() %>% pull()
+  
+  # Create modality sublist
+  list_peak_wasp[[NAME]] <- GRangesList()
+  
+  # Read in narrowPeak or broadPeak as an item within modality sublist (different command must be used depending on broadPeak or narrowPeak)
+  # Set seqinfo to hg38
+  if (str_detect(NAME, "H3K4me3|H3K4me1|H3K27ac")) {
+    
+    for (i in seq_along(PEAKS_VECTOR)) {
+      list_peak_wasp[[NAME]][[names(list_variant_calls)[i]]] <- readNarrowPeak(PEAKS_VECTOR[i])
+    }
+    
+  } else if (str_detect(NAME, "H3K9me3|H3K27me3|H3K36me3")) {
+    
+    for (i in seq_along(PEAKS_VECTOR)) {
+      list_peak_wasp[[NAME]][[names(list_variant_calls)[i]]] <- readBroadPeak(PEAKS_VECTOR[i])
+    }
+    
+  } else {
+    
+    stop("Epigenetic mark name mismatch error")
+    
+  }
+}
+```
+
+Import COHORT HG38 PEAK CALL files into R as GRangesLists
+```{r}
+# Initialize list
+list_peak_hg38 <- list()
+
+# Create list with the use of your filelists
+for (FILE in list.files("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/filelists/peak_hg38", full.names = TRUE)) {
+  # Pull out name and contents
+  NAME <- FILE %>% str_remove("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/filelists/peak_hg38/breast_normal_") %>% str_remove(".tsv")
+  PEAKS_VECTOR <- FILE %>% read.table() %>% pull()
+  
+  # Create modality sublist
+  list_peak_hg38[[NAME]] <- GRangesList()
+  
+  # Read in narrowPeak or broadPeak as an item within modality sublist (different command must be used depending on broadPeak or narrowPeak)
+  if (str_detect(NAME, "H3K4me3|H3K4me1|H3K27ac")) {
+    
+    for (i in seq_along(PEAKS_VECTOR)) {
+      list_peak_hg38[[NAME]][[names(list_variant_calls)[i]]] <- readNarrowPeak(PEAKS_VECTOR[i])
+    }
+    
+  } else if (str_detect(NAME, "H3K9me3|H3K27me3|H3K36me3")) {
+    
+    for (i in seq_along(PEAKS_VECTOR)) {
+      list_peak_hg38[[NAME]][[names(list_variant_calls)[i]]] <- readBroadPeak(PEAKS_VECTOR[i])
+    }
+    
+  } else {
+    
+    stop("Epigenetic mark name mismatch error")
+    
+  }
+}
+```
+
+Import CELL LINE WASP PEAK CALL files into R as GRangesLists
+```{r}
+# Initialize list
+cl_peak_wasp <- list()
+cl_peak_wasp$H3K27ac <- GRangesList()
+cl_peak_wasp$H3K27me3 <- GRangesList()
+cl_peak_wasp$H3K36me3 <- GRangesList()
+cl_peak_wasp$H3K4me1 <- GRangesList()
+cl_peak_wasp$H3K4me3 <- GRangesList()
+cl_peak_wasp$H3K9me3 <- GRangesList()
+
+# Create list of files
+for (FILE in list.files("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2",
+                        pattern = "*(MCF10A|HTERT_L9|HTERT_L2).wasp_peaks.(broad|narrow)Peak.filtered.bed$",
+                        full.names = TRUE, 
+                        recursive = TRUE) %>%
+     str_subset("comparisons", negate = TRUE) %>% 
+     sort(decreasing = TRUE)) {
+  
+  # Pull out name and contents
+  CURRENT_MARK <- FILE %>% 
+    str_remove("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/") %>%
+    str_remove("/(MCF10A|HTERT_L9|HTERT_L2)/peak_calls/(MCF10A|HTERT_L9|HTERT_L2).wasp_peaks.(narrow|broad)Peak.filtered.bed$")
+  CURRENT_CL <- FILE %>% 
+    str_extract("MCF10A|HTERT_L9|HTERT_L2") %>% 
+    tolower()
+  
+  # Read in narrowPeak or broadPeak as an item within modality sublist (different command must be used depending on broadPeak or narrowPeak)
+  # Set seqinfo to hg38
+  if (str_detect(CURRENT_MARK, "H3K4me3|H3K4me1|H3K27ac")) {
+    
+    cl_peak_wasp[[CURRENT_MARK]][[CURRENT_CL]] <- readNarrowPeak(FILE)
+    
+  } else if (str_detect(CURRENT_MARK, "H3K9me3|H3K27me3|H3K36me3")) {
+    
+    cl_peak_wasp[[CURRENT_MARK]][[CURRENT_CL]] <- readBroadPeak(FILE)
+    
+  } else {
+    
+    stop("Epigenetic mark name mismatch error")
+    
+  }
+}
+```
+
+Import wasp treatment pileup bigWig FILEPATHS
+```{r}
+# Create list of files
+# Initialize list
+list_treat_pileup_bw_wasp_files <- list()
+
+for (FILE in list.files("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/filelists/bw", full.names = TRUE)) {
+  # Pull out name of the modality
+  NAME <- FILE %>% str_remove("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/filelists/bw/breast_normal_") %>% str_remove(".tsv")
+  
+  # Create vector containing modality files as a correctly-named component of the list
+  list_treat_pileup_bw_wasp_files[[NAME]] <- FILE %>% read.table() %>% pull()
+  
+}
+
+# Import files into R
+# Do Not Run - bigWigs are too large - import one at a time using filepaths list
+# Initialize list
+# list_treat_pileup_bw_wasp <- list()
+# 
+# for (FILE in list.files("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/filelists/bw", full.names = TRUE)) {
+#   # Pull out name and contents
+#   NAME <- FILE %>% str_remove("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/filelists/bw/breast_normal_") %>% str_remove(".tsv")
+#   BW_VECTOR <- FILE %>% read.table() %>% pull()
+# 
+#   # Create modality sublist
+#   list_treat_pileup_bw_wasp[[NAME]] <- GRangesList()
+# 
+#   # Read in bigWigs
+#   for (i in seq_along(BW_VECTOR)) {
+#     list_treat_pileup_bw_wasp[[NAME]][[names(list_variant_calls)[i]]] <- read_bigwig(BW_VECTOR[i])
+#   }
+# }
+# 
+# rm(list_treat_pileup_bw_wasp_files)
+```
+
+Import CELL LINE WASP PEAK CALL files into R as GRangesLists
+```{r}
+# Initialize list
+pl_peak_hg38 <- list()
+pl_peak_hg38$H3K27ac <- GRangesList()
+pl_peak_hg38$H3K27me3 <- GRangesList()
+pl_peak_hg38$H3K36me3 <- GRangesList()
+pl_peak_hg38$H3K4me1 <- GRangesList()
+pl_peak_hg38$H3K4me3 <- GRangesList()
+pl_peak_hg38$H3K9me3 <- GRangesList()
+
+# Create list of files
+for (FILE in list.files("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2",
+                        pattern = "*(POOL_BC|POOL_LP|POOL_LC|POOL_SC).hg38_peaks.(broad|narrow)Peak.filtered.bed$",
+                        full.names = TRUE, 
+                        recursive = TRUE)) {
+  
+  # Pull out name and contents
+  CURRENT_MARK <- 
+    FILE %>% 
+    str_remove("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/") %>%
+    str_remove("/(POOL_BC|POOL_LP|POOL_LC|POOL_SC)/peak_calls/(POOL_BC|POOL_LP|POOL_LC|POOL_SC).hg38_peaks.(narrow|broad)Peak.filtered.bed$")
+  CURRENT_PL <- 
+    FILE %>% 
+    str_extract("POOL_BC|POOL_LP|POOL_LC|POOL_SC") %>% 
+    tolower()
+  
+  # Read in narrowPeak or broadPeak as an item within modality sublist (different command must be used depending on broadPeak or narrowPeak)
+  # Set seqinfo to hg38
+  if (str_detect(CURRENT_MARK, "H3K4me3|H3K4me1|H3K27ac")) {
+    
+    pl_peak_hg38[[CURRENT_MARK]][[CURRENT_PL]] <- readNarrowPeak(FILE)
+    
+  } else if (str_detect(CURRENT_MARK, "H3K9me3|H3K27me3|H3K36me3")) {
+    
+    pl_peak_hg38[[CURRENT_MARK]][[CURRENT_PL]] <- readBroadPeak(FILE)
+    
+  } else {
+    
+    stop("Epigenetic mark name mismatch error")
+    
+  }
+}
+```
+
+
+# Data List Reformatting Section
+# Reformat ChIP-seq peak lists
+```{r}
+# Create new object for peaks organized by individual-celltype combo
+list_peak <- list()
+
+# $H3K4me3
+# Section
+list_peak$H3K4me3 <- GRangesList()
+# Subsections
+list_peak$H3K4me3$Individual_1_BC <- list_peak_wasp$H3K4me3_BC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_2_BC <- list_peak_wasp$H3K4me3_BC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_3_BC <- list_peak_wasp$H3K4me3_BC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_4_BC <- list_peak_wasp$H3K4me3_BC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_5_BC <- list_peak_wasp$H3K4me3_BC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_6_BC <- list_peak_wasp$H3K4me3_BC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_7_BC <- list_peak_wasp$H3K4me3_BC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_8_BC <- list_peak_wasp$H3K4me3_BC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_1_LP <- list_peak_wasp$H3K4me3_LP[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_2_LP <- list_peak_wasp$H3K4me3_LP[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_3_LP <- list_peak_wasp$H3K4me3_LP[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_4_LP <- list_peak_wasp$H3K4me3_LP[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_5_LP <- list_peak_wasp$H3K4me3_LP[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_6_LP <- list_peak_wasp$H3K4me3_LP[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_7_LP <- list_peak_wasp$H3K4me3_LP[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_8_LP <- list_peak_wasp$H3K4me3_LP[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_1_LC <- list_peak_wasp$H3K4me3_LC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_2_LC <- list_peak_wasp$H3K4me3_LC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_3_LC <- list_peak_wasp$H3K4me3_LC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_4_LC <- list_peak_wasp$H3K4me3_LC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_5_LC <- list_peak_wasp$H3K4me3_LC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_6_LC <- list_peak_wasp$H3K4me3_LC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_7_LC <- list_peak_wasp$H3K4me3_LC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_8_LC <- list_peak_wasp$H3K4me3_LC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_1_SC <- list_peak_wasp$H3K4me3_SC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_2_SC <- list_peak_wasp$H3K4me3_SC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_3_SC <- list_peak_wasp$H3K4me3_SC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_4_SC <- list_peak_wasp$H3K4me3_SC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_5_SC <- list_peak_wasp$H3K4me3_SC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_6_SC <- list_peak_wasp$H3K4me3_SC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_7_SC <- list_peak_wasp$H3K4me3_SC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Individual_8_SC <- list_peak_wasp$H3K4me3_SC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$MCF10A          <- cl_peak_wasp$H3K4me3[["mcf10a"]]   %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$hTERT_L9        <- cl_peak_wasp$H3K4me3[["htert_l9"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$hTERT_L2        <- cl_peak_wasp$H3K4me3[["htert_l2"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Pool_BC         <- pl_peak_hg38$H3K4me3[["pool_bc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Pool_LP         <- pl_peak_hg38$H3K4me3[["pool_lp"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Pool_LC         <- pl_peak_hg38$H3K4me3[["pool_lc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me3$Pool_SC         <- pl_peak_hg38$H3K4me3[["pool_sc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+
+# $H3K27ac
+# Section
+list_peak$H3K27ac <- GRangesList()
+# Subsections
+list_peak$H3K27ac$Individual_1_BC <- list_peak_wasp$H3K27ac_BC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_2_BC <- list_peak_wasp$H3K27ac_BC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_3_BC <- list_peak_wasp$H3K27ac_BC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_4_BC <- list_peak_wasp$H3K27ac_BC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_5_BC <- list_peak_wasp$H3K27ac_BC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_6_BC <- list_peak_wasp$H3K27ac_BC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_7_BC <- list_peak_wasp$H3K27ac_BC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_8_BC <- list_peak_wasp$H3K27ac_BC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_1_LP <- list_peak_wasp$H3K27ac_LP[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_2_LP <- list_peak_wasp$H3K27ac_LP[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_3_LP <- list_peak_wasp$H3K27ac_LP[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_4_LP <- list_peak_wasp$H3K27ac_LP[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_5_LP <- list_peak_wasp$H3K27ac_LP[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_6_LP <- list_peak_wasp$H3K27ac_LP[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_7_LP <- list_peak_wasp$H3K27ac_LP[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_8_LP <- list_peak_wasp$H3K27ac_LP[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_1_LC <- list_peak_wasp$H3K27ac_LC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_2_LC <- list_peak_wasp$H3K27ac_LC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_3_LC <- list_peak_wasp$H3K27ac_LC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_4_LC <- list_peak_wasp$H3K27ac_LC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_5_LC <- list_peak_wasp$H3K27ac_LC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_6_LC <- list_peak_wasp$H3K27ac_LC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_7_LC <- list_peak_wasp$H3K27ac_LC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_8_LC <- list_peak_wasp$H3K27ac_LC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_1_SC <- list_peak_wasp$H3K27ac_SC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_2_SC <- list_peak_wasp$H3K27ac_SC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_3_SC <- list_peak_wasp$H3K27ac_SC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_4_SC <- list_peak_wasp$H3K27ac_SC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_5_SC <- list_peak_wasp$H3K27ac_SC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_6_SC <- list_peak_wasp$H3K27ac_SC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_7_SC <- list_peak_wasp$H3K27ac_SC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Individual_8_SC <- list_peak_wasp$H3K27ac_SC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$MCF10A          <- cl_peak_wasp$H3K27ac[["mcf10a"]]   %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$hTERT_L9        <- cl_peak_wasp$H3K27ac[["htert_l9"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$hTERT_L2        <- cl_peak_wasp$H3K27ac[["htert_l2"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Pool_BC         <- pl_peak_hg38$H3K27ac[["pool_bc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Pool_LP         <- pl_peak_hg38$H3K27ac[["pool_lp"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Pool_LC         <- pl_peak_hg38$H3K27ac[["pool_lc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27ac$Pool_SC         <- pl_peak_hg38$H3K27ac[["pool_sc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+
+# $H3K4me1
+# Section
+list_peak$H3K4me1 <- GRangesList()
+# Subsections
+list_peak$H3K4me1$Individual_1_BC <- list_peak_wasp$H3K4me1_BC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_2_BC <- list_peak_wasp$H3K4me1_BC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_3_BC <- list_peak_wasp$H3K4me1_BC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_4_BC <- list_peak_wasp$H3K4me1_BC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_5_BC <- list_peak_wasp$H3K4me1_BC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_6_BC <- list_peak_wasp$H3K4me1_BC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_7_BC <- list_peak_wasp$H3K4me1_BC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_8_BC <- list_peak_wasp$H3K4me1_BC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_1_LP <- list_peak_wasp$H3K4me1_LP[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_2_LP <- list_peak_wasp$H3K4me1_LP[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_3_LP <- list_peak_wasp$H3K4me1_LP[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_4_LP <- list_peak_wasp$H3K4me1_LP[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_5_LP <- list_peak_wasp$H3K4me1_LP[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_6_LP <- list_peak_wasp$H3K4me1_LP[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_7_LP <- list_peak_wasp$H3K4me1_LP[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_8_LP <- list_peak_wasp$H3K4me1_LP[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_1_LC <- list_peak_wasp$H3K4me1_LC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_2_LC <- list_peak_wasp$H3K4me1_LC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_3_LC <- list_peak_wasp$H3K4me1_LC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_4_LC <- list_peak_wasp$H3K4me1_LC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_5_LC <- list_peak_wasp$H3K4me1_LC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_6_LC <- list_peak_wasp$H3K4me1_LC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_7_LC <- list_peak_wasp$H3K4me1_LC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_8_LC <- list_peak_wasp$H3K4me1_LC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_1_SC <- list_peak_wasp$H3K4me1_SC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_2_SC <- list_peak_wasp$H3K4me1_SC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_3_SC <- list_peak_wasp$H3K4me1_SC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_4_SC <- list_peak_wasp$H3K4me1_SC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_5_SC <- list_peak_wasp$H3K4me1_SC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_6_SC <- list_peak_wasp$H3K4me1_SC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_7_SC <- list_peak_wasp$H3K4me1_SC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Individual_8_SC <- list_peak_wasp$H3K4me1_SC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$MCF10A          <- cl_peak_wasp$H3K4me1[["mcf10a"]]   %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$hTERT_L9        <- cl_peak_wasp$H3K4me1[["htert_l9"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$hTERT_L2        <- cl_peak_wasp$H3K4me1[["htert_l2"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Pool_BC         <- pl_peak_hg38$H3K4me1[["pool_bc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Pool_LP         <- pl_peak_hg38$H3K4me1[["pool_lp"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Pool_LC         <- pl_peak_hg38$H3K4me1[["pool_lc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K4me1$Pool_SC         <- pl_peak_hg38$H3K4me1[["pool_sc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+
+# $H3K9me3
+# Section
+list_peak$H3K9me3 <- GRangesList()
+# Subsections
+# Removed Individual_6_BC due to QC fail
+list_peak$H3K9me3$Individual_1_BC <- list_peak_wasp$H3K9me3_BC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_2_BC <- list_peak_wasp$H3K9me3_BC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_3_BC <- list_peak_wasp$H3K9me3_BC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_4_BC <- list_peak_wasp$H3K9me3_BC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_5_BC <- list_peak_wasp$H3K9me3_BC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+#list_peak$H3K9me3$Individual_6_BC <- list_peak_wasp$H3K9me3_BC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_7_BC <- list_peak_wasp$H3K9me3_BC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_8_BC <- list_peak_wasp$H3K9me3_BC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_1_LP <- list_peak_wasp$H3K9me3_LP[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_2_LP <- list_peak_wasp$H3K9me3_LP[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_3_LP <- list_peak_wasp$H3K9me3_LP[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_4_LP <- list_peak_wasp$H3K9me3_LP[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_5_LP <- list_peak_wasp$H3K9me3_LP[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_6_LP <- list_peak_wasp$H3K9me3_LP[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_7_LP <- list_peak_wasp$H3K9me3_LP[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_8_LP <- list_peak_wasp$H3K9me3_LP[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_1_LC <- list_peak_wasp$H3K9me3_LC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_2_LC <- list_peak_wasp$H3K9me3_LC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_3_LC <- list_peak_wasp$H3K9me3_LC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_4_LC <- list_peak_wasp$H3K9me3_LC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_5_LC <- list_peak_wasp$H3K9me3_LC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_6_LC <- list_peak_wasp$H3K9me3_LC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_7_LC <- list_peak_wasp$H3K9me3_LC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_8_LC <- list_peak_wasp$H3K9me3_LC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_1_SC <- list_peak_wasp$H3K9me3_SC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_2_SC <- list_peak_wasp$H3K9me3_SC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_3_SC <- list_peak_wasp$H3K9me3_SC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_4_SC <- list_peak_wasp$H3K9me3_SC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_5_SC <- list_peak_wasp$H3K9me3_SC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_6_SC <- list_peak_wasp$H3K9me3_SC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_7_SC <- list_peak_wasp$H3K9me3_SC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Individual_8_SC <- list_peak_wasp$H3K9me3_SC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$MCF10A          <- cl_peak_wasp$H3K9me3[["mcf10a"]]   %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$hTERT_L9        <- cl_peak_wasp$H3K9me3[["htert_l9"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$hTERT_L2        <- cl_peak_wasp$H3K9me3[["htert_l2"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Pool_BC         <- pl_peak_hg38$H3K9me3[["pool_bc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Pool_LP         <- pl_peak_hg38$H3K9me3[["pool_lp"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Pool_LC         <- pl_peak_hg38$H3K9me3[["pool_lc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K9me3$Pool_SC         <- pl_peak_hg38$H3K9me3[["pool_sc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+
+# $H3K27me3
+# Section
+list_peak$H3K27me3 <- GRangesList()
+# Subsections
+list_peak$H3K27me3$Individual_1_BC <- list_peak_wasp$H3K27me3_BC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_2_BC <- list_peak_wasp$H3K27me3_BC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_3_BC <- list_peak_wasp$H3K27me3_BC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_4_BC <- list_peak_wasp$H3K27me3_BC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_5_BC <- list_peak_wasp$H3K27me3_BC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_6_BC <- list_peak_wasp$H3K27me3_BC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_7_BC <- list_peak_wasp$H3K27me3_BC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_8_BC <- list_peak_wasp$H3K27me3_BC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_1_LP <- list_peak_wasp$H3K27me3_LP[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_2_LP <- list_peak_wasp$H3K27me3_LP[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_3_LP <- list_peak_wasp$H3K27me3_LP[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_4_LP <- list_peak_wasp$H3K27me3_LP[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_5_LP <- list_peak_wasp$H3K27me3_LP[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_6_LP <- list_peak_wasp$H3K27me3_LP[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_7_LP <- list_peak_wasp$H3K27me3_LP[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_8_LP <- list_peak_wasp$H3K27me3_LP[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_1_LC <- list_peak_wasp$H3K27me3_LC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_2_LC <- list_peak_wasp$H3K27me3_LC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_3_LC <- list_peak_wasp$H3K27me3_LC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_4_LC <- list_peak_wasp$H3K27me3_LC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_5_LC <- list_peak_wasp$H3K27me3_LC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_6_LC <- list_peak_wasp$H3K27me3_LC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_7_LC <- list_peak_wasp$H3K27me3_LC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_8_LC <- list_peak_wasp$H3K27me3_LC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_1_SC <- list_peak_wasp$H3K27me3_SC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_2_SC <- list_peak_wasp$H3K27me3_SC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_3_SC <- list_peak_wasp$H3K27me3_SC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_4_SC <- list_peak_wasp$H3K27me3_SC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_5_SC <- list_peak_wasp$H3K27me3_SC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_6_SC <- list_peak_wasp$H3K27me3_SC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_7_SC <- list_peak_wasp$H3K27me3_SC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Individual_8_SC <- list_peak_wasp$H3K27me3_SC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$MCF10A          <- cl_peak_wasp$H3K27me3[["mcf10a"]]   %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$hTERT_L9        <- cl_peak_wasp$H3K27me3[["htert_l9"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$hTERT_L2        <- cl_peak_wasp$H3K27me3[["htert_l2"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Pool_BC         <- pl_peak_hg38$H3K27me3[["pool_bc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Pool_LP         <- pl_peak_hg38$H3K27me3[["pool_lp"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Pool_LC         <- pl_peak_hg38$H3K27me3[["pool_lc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K27me3$Pool_SC         <- pl_peak_hg38$H3K27me3[["pool_sc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+
+# $H3K36me3
+# Section
+list_peak$H3K36me3 <- GRangesList()
+# Subsections
+list_peak$H3K36me3$Individual_1_BC <- list_peak_wasp$H3K36me3_BC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_2_BC <- list_peak_wasp$H3K36me3_BC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_3_BC <- list_peak_wasp$H3K36me3_BC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_4_BC <- list_peak_wasp$H3K36me3_BC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_5_BC <- list_peak_wasp$H3K36me3_BC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_6_BC <- list_peak_wasp$H3K36me3_BC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_7_BC <- list_peak_wasp$H3K36me3_BC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_8_BC <- list_peak_wasp$H3K36me3_BC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_1_LP <- list_peak_wasp$H3K36me3_LP[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_2_LP <- list_peak_wasp$H3K36me3_LP[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_3_LP <- list_peak_wasp$H3K36me3_LP[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_4_LP <- list_peak_wasp$H3K36me3_LP[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_5_LP <- list_peak_wasp$H3K36me3_LP[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_6_LP <- list_peak_wasp$H3K36me3_LP[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_7_LP <- list_peak_wasp$H3K36me3_LP[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_8_LP <- list_peak_wasp$H3K36me3_LP[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_1_LC <- list_peak_wasp$H3K36me3_LC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_2_LC <- list_peak_wasp$H3K36me3_LC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_3_LC <- list_peak_wasp$H3K36me3_LC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_4_LC <- list_peak_wasp$H3K36me3_LC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_5_LC <- list_peak_wasp$H3K36me3_LC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_6_LC <- list_peak_wasp$H3K36me3_LC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_7_LC <- list_peak_wasp$H3K36me3_LC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_8_LC <- list_peak_wasp$H3K36me3_LC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_1_SC <- list_peak_wasp$H3K36me3_SC[[1]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_2_SC <- list_peak_wasp$H3K36me3_SC[[2]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_3_SC <- list_peak_wasp$H3K36me3_SC[[3]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_4_SC <- list_peak_wasp$H3K36me3_SC[[4]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_5_SC <- list_peak_wasp$H3K36me3_SC[[5]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_6_SC <- list_peak_wasp$H3K36me3_SC[[6]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_7_SC <- list_peak_wasp$H3K36me3_SC[[7]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Individual_8_SC <- list_peak_wasp$H3K36me3_SC[[8]]     %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$MCF10A          <- cl_peak_wasp$H3K36me3[["mcf10a"]]   %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$hTERT_L9        <- cl_peak_wasp$H3K36me3[["htert_l9"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$hTERT_L2        <- cl_peak_wasp$H3K36me3[["htert_l2"]] %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Pool_BC         <- pl_peak_hg38$H3K36me3[["pool_bc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Pool_LP         <- pl_peak_hg38$H3K36me3[["pool_lp"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Pool_LC         <- pl_peak_hg38$H3K36me3[["pool_lc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+list_peak$H3K36me3$Pool_SC         <- pl_peak_hg38$H3K36me3[["pool_sc"]]  %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+```
+
+# Reformat bigWig filepath lists
+```{r}
+# Create new object for bigWig files organized by individual-celltype combo
+# Initialize list
+list_treat_pileup_bw_wasp_files_v2 <- list()
+
+# H3K4me3
+# Section
+list_treat_pileup_bw_wasp_files_v2$H3K4me3 <- list()
+# Subsections
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_1_BC <- list_treat_pileup_bw_wasp_files$H3K4me3_BC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_2_BC <- list_treat_pileup_bw_wasp_files$H3K4me3_BC[[2]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_3_BC <- list_treat_pileup_bw_wasp_files$H3K4me3_BC[[3]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_4_BC <- list_treat_pileup_bw_wasp_files$H3K4me3_BC[[4]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_5_BC <- list_treat_pileup_bw_wasp_files$H3K4me3_BC[[5]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_6_BC <- list_treat_pileup_bw_wasp_files$H3K4me3_BC[[6]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_7_BC <- list_treat_pileup_bw_wasp_files$H3K4me3_BC[[7]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_8_BC <- list_treat_pileup_bw_wasp_files$H3K4me3_BC[[8]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_1_LP <- list_treat_pileup_bw_wasp_files$H3K4me3_LP[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_2_LP <- list_treat_pileup_bw_wasp_files$H3K4me3_LP[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_3_LP <- list_treat_pileup_bw_wasp_files$H3K4me3_LP[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_4_LP <- list_treat_pileup_bw_wasp_files$H3K4me3_LP[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_5_LP <- list_treat_pileup_bw_wasp_files$H3K4me3_LP[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_6_LP <- list_treat_pileup_bw_wasp_files$H3K4me3_LP[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_7_LP <- list_treat_pileup_bw_wasp_files$H3K4me3_LP[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_8_LP <- list_treat_pileup_bw_wasp_files$H3K4me3_LP[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_1_LC <- list_treat_pileup_bw_wasp_files$H3K4me3_LC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_2_LC <- list_treat_pileup_bw_wasp_files$H3K4me3_LC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_3_LC <- list_treat_pileup_bw_wasp_files$H3K4me3_LC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_4_LC <- list_treat_pileup_bw_wasp_files$H3K4me3_LC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_5_LC <- list_treat_pileup_bw_wasp_files$H3K4me3_LC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_6_LC <- list_treat_pileup_bw_wasp_files$H3K4me3_LC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_7_LC <- list_treat_pileup_bw_wasp_files$H3K4me3_LC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_8_LC <- list_treat_pileup_bw_wasp_files$H3K4me3_LC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_1_SC <- list_treat_pileup_bw_wasp_files$H3K4me3_SC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_2_SC <- list_treat_pileup_bw_wasp_files$H3K4me3_SC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_3_SC <- list_treat_pileup_bw_wasp_files$H3K4me3_SC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_4_SC <- list_treat_pileup_bw_wasp_files$H3K4me3_SC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_5_SC <- list_treat_pileup_bw_wasp_files$H3K4me3_SC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_6_SC <- list_treat_pileup_bw_wasp_files$H3K4me3_SC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_7_SC <- list_treat_pileup_bw_wasp_files$H3K4me3_SC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Individual_8_SC <- list_treat_pileup_bw_wasp_files$H3K4me3_SC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$MCF10A   <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K4me3", "/MCF10A/peak_calls/MCF10A.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$hTERT_L9 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K4me3", "/HTERT_L9/peak_calls/HTERT_L9.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$hTERT_L2 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K4me3", "/HTERT_L2/peak_calls/HTERT_L2.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Pool_BC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K4me3", "/POOL_BC/peak_calls/POOL_BC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Pool_LP  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K4me3", "/POOL_LP/peak_calls/POOL_LP.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Pool_LC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K4me3", "/POOL_LC/peak_calls/POOL_LC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me3$Pool_SC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K4me3", "/POOL_SC/peak_calls/POOL_SC.hg38_treat_pileup.bw")
+
+# H3K27ac
+# Section
+list_treat_pileup_bw_wasp_files_v2$H3K27ac <- list()
+# Subsections
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_1_BC <- list_treat_pileup_bw_wasp_files$H3K27ac_BC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_2_BC <- list_treat_pileup_bw_wasp_files$H3K27ac_BC[[2]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_3_BC <- list_treat_pileup_bw_wasp_files$H3K27ac_BC[[3]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_4_BC <- list_treat_pileup_bw_wasp_files$H3K27ac_BC[[4]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_5_BC <- list_treat_pileup_bw_wasp_files$H3K27ac_BC[[5]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_6_BC <- list_treat_pileup_bw_wasp_files$H3K27ac_BC[[6]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_7_BC <- list_treat_pileup_bw_wasp_files$H3K27ac_BC[[7]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_8_BC <- list_treat_pileup_bw_wasp_files$H3K27ac_BC[[8]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_1_LP <- list_treat_pileup_bw_wasp_files$H3K27ac_LP[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_2_LP <- list_treat_pileup_bw_wasp_files$H3K27ac_LP[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_3_LP <- list_treat_pileup_bw_wasp_files$H3K27ac_LP[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_4_LP <- list_treat_pileup_bw_wasp_files$H3K27ac_LP[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_5_LP <- list_treat_pileup_bw_wasp_files$H3K27ac_LP[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_6_LP <- list_treat_pileup_bw_wasp_files$H3K27ac_LP[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_7_LP <- list_treat_pileup_bw_wasp_files$H3K27ac_LP[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_8_LP <- list_treat_pileup_bw_wasp_files$H3K27ac_LP[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_1_LC <- list_treat_pileup_bw_wasp_files$H3K27ac_LC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_2_LC <- list_treat_pileup_bw_wasp_files$H3K27ac_LC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_3_LC <- list_treat_pileup_bw_wasp_files$H3K27ac_LC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_4_LC <- list_treat_pileup_bw_wasp_files$H3K27ac_LC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_5_LC <- list_treat_pileup_bw_wasp_files$H3K27ac_LC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_6_LC <- list_treat_pileup_bw_wasp_files$H3K27ac_LC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_7_LC <- list_treat_pileup_bw_wasp_files$H3K27ac_LC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_8_LC <- list_treat_pileup_bw_wasp_files$H3K27ac_LC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_1_SC <- list_treat_pileup_bw_wasp_files$H3K27ac_SC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_2_SC <- list_treat_pileup_bw_wasp_files$H3K27ac_SC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_3_SC <- list_treat_pileup_bw_wasp_files$H3K27ac_SC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_4_SC <- list_treat_pileup_bw_wasp_files$H3K27ac_SC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_5_SC <- list_treat_pileup_bw_wasp_files$H3K27ac_SC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_6_SC <- list_treat_pileup_bw_wasp_files$H3K27ac_SC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_7_SC <- list_treat_pileup_bw_wasp_files$H3K27ac_SC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Individual_8_SC <- list_treat_pileup_bw_wasp_files$H3K27ac_SC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$MCF10A   <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K27ac", "/MCF10A/peak_calls/MCF10A.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$hTERT_L9 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K27ac", "/HTERT_L9/peak_calls/HTERT_L9.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$hTERT_L2 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K27ac", "/HTERT_L2/peak_calls/HTERT_L2.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Pool_BC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K27ac", "/POOL_BC/peak_calls/POOL_BC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Pool_LP  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K27ac", "/POOL_LP/peak_calls/POOL_LP.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Pool_LC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K27ac", "/POOL_LC/peak_calls/POOL_LC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27ac$Pool_SC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K27ac", "/POOL_SC/peak_calls/POOL_SC.hg38_treat_pileup.bw")
+
+# H3K4me1
+# Section
+list_treat_pileup_bw_wasp_files_v2$H3K4me1 <- list()
+# Subsections
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_1_BC <- list_treat_pileup_bw_wasp_files$H3K4me1_BC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_2_BC <- list_treat_pileup_bw_wasp_files$H3K4me1_BC[[2]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_3_BC <- list_treat_pileup_bw_wasp_files$H3K4me1_BC[[3]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_4_BC <- list_treat_pileup_bw_wasp_files$H3K4me1_BC[[4]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_5_BC <- list_treat_pileup_bw_wasp_files$H3K4me1_BC[[5]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_6_BC <- list_treat_pileup_bw_wasp_files$H3K4me1_BC[[6]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_7_BC <- list_treat_pileup_bw_wasp_files$H3K4me1_BC[[7]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_8_BC <- list_treat_pileup_bw_wasp_files$H3K4me1_BC[[8]] 
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_1_LP <- list_treat_pileup_bw_wasp_files$H3K4me1_LP[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_2_LP <- list_treat_pileup_bw_wasp_files$H3K4me1_LP[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_3_LP <- list_treat_pileup_bw_wasp_files$H3K4me1_LP[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_4_LP <- list_treat_pileup_bw_wasp_files$H3K4me1_LP[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_5_LP <- list_treat_pileup_bw_wasp_files$H3K4me1_LP[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_6_LP <- list_treat_pileup_bw_wasp_files$H3K4me1_LP[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_7_LP <- list_treat_pileup_bw_wasp_files$H3K4me1_LP[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_8_LP <- list_treat_pileup_bw_wasp_files$H3K4me1_LP[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_1_LC <- list_treat_pileup_bw_wasp_files$H3K4me1_LC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_2_LC <- list_treat_pileup_bw_wasp_files$H3K4me1_LC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_3_LC <- list_treat_pileup_bw_wasp_files$H3K4me1_LC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_4_LC <- list_treat_pileup_bw_wasp_files$H3K4me1_LC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_5_LC <- list_treat_pileup_bw_wasp_files$H3K4me1_LC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_6_LC <- list_treat_pileup_bw_wasp_files$H3K4me1_LC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_7_LC <- list_treat_pileup_bw_wasp_files$H3K4me1_LC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_8_LC <- list_treat_pileup_bw_wasp_files$H3K4me1_LC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_1_SC <- list_treat_pileup_bw_wasp_files$H3K4me1_SC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_2_SC <- list_treat_pileup_bw_wasp_files$H3K4me1_SC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_3_SC <- list_treat_pileup_bw_wasp_files$H3K4me1_SC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_4_SC <- list_treat_pileup_bw_wasp_files$H3K4me1_SC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_5_SC <- list_treat_pileup_bw_wasp_files$H3K4me1_SC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_6_SC <- list_treat_pileup_bw_wasp_files$H3K4me1_SC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_7_SC <- list_treat_pileup_bw_wasp_files$H3K4me1_SC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Individual_8_SC <- list_treat_pileup_bw_wasp_files$H3K4me1_SC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$MCF10A   <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K4me1", "/MCF10A/peak_calls/MCF10A.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$hTERT_L9 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K4me1", "/HTERT_L9/peak_calls/HTERT_L9.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$hTERT_L2 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K4me1", "/HTERT_L2/peak_calls/HTERT_L2.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Pool_BC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K4me1", "/POOL_BC/peak_calls/POOL_BC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Pool_LP  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K4me1", "/POOL_LP/peak_calls/POOL_LP.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Pool_LC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K4me1", "/POOL_LC/peak_calls/POOL_LC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K4me1$Pool_SC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K4me1", "/POOL_SC/peak_calls/POOL_SC.hg38_treat_pileup.bw")
+
+
+# H3K9me3
+# Section
+list_treat_pileup_bw_wasp_files_v2$H3K9me3 <- list()
+# Subsections
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_1_BC <- list_treat_pileup_bw_wasp_files$H3K9me3_BC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_2_BC <- list_treat_pileup_bw_wasp_files$H3K9me3_BC[[2]] 
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_3_BC <- list_treat_pileup_bw_wasp_files$H3K9me3_BC[[3]] 
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_4_BC <- list_treat_pileup_bw_wasp_files$H3K9me3_BC[[4]] 
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_5_BC <- list_treat_pileup_bw_wasp_files$H3K9me3_BC[[5]] 
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_6_BC <- list_treat_pileup_bw_wasp_files$H3K9me3_BC[[6]] 
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_7_BC <- list_treat_pileup_bw_wasp_files$H3K9me3_BC[[7]] 
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_8_BC <- list_treat_pileup_bw_wasp_files$H3K9me3_BC[[8]] 
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_1_LP <- list_treat_pileup_bw_wasp_files$H3K9me3_LP[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_2_LP <- list_treat_pileup_bw_wasp_files$H3K9me3_LP[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_3_LP <- list_treat_pileup_bw_wasp_files$H3K9me3_LP[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_4_LP <- list_treat_pileup_bw_wasp_files$H3K9me3_LP[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_5_LP <- list_treat_pileup_bw_wasp_files$H3K9me3_LP[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_6_LP <- list_treat_pileup_bw_wasp_files$H3K9me3_LP[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_7_LP <- list_treat_pileup_bw_wasp_files$H3K9me3_LP[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_8_LP <- list_treat_pileup_bw_wasp_files$H3K9me3_LP[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_1_LC <- list_treat_pileup_bw_wasp_files$H3K9me3_LC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_2_LC <- list_treat_pileup_bw_wasp_files$H3K9me3_LC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_3_LC <- list_treat_pileup_bw_wasp_files$H3K9me3_LC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_4_LC <- list_treat_pileup_bw_wasp_files$H3K9me3_LC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_5_LC <- list_treat_pileup_bw_wasp_files$H3K9me3_LC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_6_LC <- list_treat_pileup_bw_wasp_files$H3K9me3_LC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_7_LC <- list_treat_pileup_bw_wasp_files$H3K9me3_LC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_8_LC <- list_treat_pileup_bw_wasp_files$H3K9me3_LC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_1_SC <- list_treat_pileup_bw_wasp_files$H3K9me3_SC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_2_SC <- list_treat_pileup_bw_wasp_files$H3K9me3_SC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_3_SC <- list_treat_pileup_bw_wasp_files$H3K9me3_SC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_4_SC <- list_treat_pileup_bw_wasp_files$H3K9me3_SC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_5_SC <- list_treat_pileup_bw_wasp_files$H3K9me3_SC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_6_SC <- list_treat_pileup_bw_wasp_files$H3K9me3_SC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_7_SC <- list_treat_pileup_bw_wasp_files$H3K9me3_SC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Individual_8_SC <- list_treat_pileup_bw_wasp_files$H3K9me3_SC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$MCF10A   <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K9me3", "/MCF10A/peak_calls/MCF10A.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$hTERT_L9 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K9me3", "/HTERT_L9/peak_calls/HTERT_L9.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$hTERT_L2 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K9me3", "/HTERT_L2/peak_calls/HTERT_L2.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Pool_BC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K9me3", "/POOL_BC/peak_calls/POOL_BC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Pool_LP  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K9me3", "/POOL_LP/peak_calls/POOL_LP.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Pool_LC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K9me3", "/POOL_LC/peak_calls/POOL_LC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K9me3$Pool_SC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K9me3", "/POOL_SC/peak_calls/POOL_SC.hg38_treat_pileup.bw")
+
+# H3K27me3
+# Section
+list_treat_pileup_bw_wasp_files_v2$H3K27me3 <- list()
+# Subsections
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_1_BC <- list_treat_pileup_bw_wasp_files$H3K27me3_BC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_2_BC <- list_treat_pileup_bw_wasp_files$H3K27me3_BC[[2]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_3_BC <- list_treat_pileup_bw_wasp_files$H3K27me3_BC[[3]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_4_BC <- list_treat_pileup_bw_wasp_files$H3K27me3_BC[[4]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_5_BC <- list_treat_pileup_bw_wasp_files$H3K27me3_BC[[5]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_6_BC <- list_treat_pileup_bw_wasp_files$H3K27me3_BC[[6]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_7_BC <- list_treat_pileup_bw_wasp_files$H3K27me3_BC[[7]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_8_BC <- list_treat_pileup_bw_wasp_files$H3K27me3_BC[[8]] 
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_1_LP <- list_treat_pileup_bw_wasp_files$H3K27me3_LP[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_2_LP <- list_treat_pileup_bw_wasp_files$H3K27me3_LP[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_3_LP <- list_treat_pileup_bw_wasp_files$H3K27me3_LP[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_4_LP <- list_treat_pileup_bw_wasp_files$H3K27me3_LP[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_5_LP <- list_treat_pileup_bw_wasp_files$H3K27me3_LP[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_6_LP <- list_treat_pileup_bw_wasp_files$H3K27me3_LP[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_7_LP <- list_treat_pileup_bw_wasp_files$H3K27me3_LP[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_8_LP <- list_treat_pileup_bw_wasp_files$H3K27me3_LP[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_1_LC <- list_treat_pileup_bw_wasp_files$H3K27me3_LC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_2_LC <- list_treat_pileup_bw_wasp_files$H3K27me3_LC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_3_LC <- list_treat_pileup_bw_wasp_files$H3K27me3_LC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_4_LC <- list_treat_pileup_bw_wasp_files$H3K27me3_LC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_5_LC <- list_treat_pileup_bw_wasp_files$H3K27me3_LC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_6_LC <- list_treat_pileup_bw_wasp_files$H3K27me3_LC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_7_LC <- list_treat_pileup_bw_wasp_files$H3K27me3_LC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_8_LC <- list_treat_pileup_bw_wasp_files$H3K27me3_LC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_1_SC <- list_treat_pileup_bw_wasp_files$H3K27me3_SC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_2_SC <- list_treat_pileup_bw_wasp_files$H3K27me3_SC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_3_SC <- list_treat_pileup_bw_wasp_files$H3K27me3_SC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_4_SC <- list_treat_pileup_bw_wasp_files$H3K27me3_SC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_5_SC <- list_treat_pileup_bw_wasp_files$H3K27me3_SC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_6_SC <- list_treat_pileup_bw_wasp_files$H3K27me3_SC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_7_SC <- list_treat_pileup_bw_wasp_files$H3K27me3_SC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Individual_8_SC <- list_treat_pileup_bw_wasp_files$H3K27me3_SC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$MCF10A   <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K27me3", "/MCF10A/peak_calls/MCF10A.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$hTERT_L9 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K27me3", "/HTERT_L9/peak_calls/HTERT_L9.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$hTERT_L2 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K27me3", "/HTERT_L2/peak_calls/HTERT_L2.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Pool_BC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K27me3", "/POOL_BC/peak_calls/POOL_BC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Pool_LP  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K27me3", "/POOL_LP/peak_calls/POOL_LP.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Pool_LC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K27me3", "/POOL_LC/peak_calls/POOL_LC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K27me3$Pool_SC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K27me3", "/POOL_SC/peak_calls/POOL_SC.hg38_treat_pileup.bw")
+
+# H3K36me3
+# Section
+list_treat_pileup_bw_wasp_files_v2$H3K36me3 <- list()
+# Subsections
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_1_BC <- list_treat_pileup_bw_wasp_files$H3K36me3_BC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_2_BC <- list_treat_pileup_bw_wasp_files$H3K36me3_BC[[2]] 
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_3_BC <- list_treat_pileup_bw_wasp_files$H3K36me3_BC[[3]] 
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_4_BC <- list_treat_pileup_bw_wasp_files$H3K36me3_BC[[4]] 
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_5_BC <- list_treat_pileup_bw_wasp_files$H3K36me3_BC[[5]] 
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_6_BC <- list_treat_pileup_bw_wasp_files$H3K36me3_BC[[6]] 
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_7_BC <- list_treat_pileup_bw_wasp_files$H3K36me3_BC[[7]] 
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_8_BC <- list_treat_pileup_bw_wasp_files$H3K36me3_BC[[8]] 
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_1_LP <- list_treat_pileup_bw_wasp_files$H3K36me3_LP[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_2_LP <- list_treat_pileup_bw_wasp_files$H3K36me3_LP[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_3_LP <- list_treat_pileup_bw_wasp_files$H3K36me3_LP[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_4_LP <- list_treat_pileup_bw_wasp_files$H3K36me3_LP[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_5_LP <- list_treat_pileup_bw_wasp_files$H3K36me3_LP[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_6_LP <- list_treat_pileup_bw_wasp_files$H3K36me3_LP[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_7_LP <- list_treat_pileup_bw_wasp_files$H3K36me3_LP[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_8_LP <- list_treat_pileup_bw_wasp_files$H3K36me3_LP[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_1_LC <- list_treat_pileup_bw_wasp_files$H3K36me3_LC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_2_LC <- list_treat_pileup_bw_wasp_files$H3K36me3_LC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_3_LC <- list_treat_pileup_bw_wasp_files$H3K36me3_LC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_4_LC <- list_treat_pileup_bw_wasp_files$H3K36me3_LC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_5_LC <- list_treat_pileup_bw_wasp_files$H3K36me3_LC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_6_LC <- list_treat_pileup_bw_wasp_files$H3K36me3_LC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_7_LC <- list_treat_pileup_bw_wasp_files$H3K36me3_LC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_8_LC <- list_treat_pileup_bw_wasp_files$H3K36me3_LC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_1_SC <- list_treat_pileup_bw_wasp_files$H3K36me3_SC[[1]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_2_SC <- list_treat_pileup_bw_wasp_files$H3K36me3_SC[[2]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_3_SC <- list_treat_pileup_bw_wasp_files$H3K36me3_SC[[3]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_4_SC <- list_treat_pileup_bw_wasp_files$H3K36me3_SC[[4]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_5_SC <- list_treat_pileup_bw_wasp_files$H3K36me3_SC[[5]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_6_SC <- list_treat_pileup_bw_wasp_files$H3K36me3_SC[[6]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_7_SC <- list_treat_pileup_bw_wasp_files$H3K36me3_SC[[7]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Individual_8_SC <- list_treat_pileup_bw_wasp_files$H3K36me3_SC[[8]]
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$MCF10A   <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K36me3", "/MCF10A/peak_calls/MCF10A.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$hTERT_L9 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K36me3", "/HTERT_L9/peak_calls/HTERT_L9.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$hTERT_L2 <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/cell_lines/1/output2/", "H3K36me3", "/HTERT_L2/peak_calls/HTERT_L2.wasp_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Pool_BC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K36me3", "/POOL_BC/peak_calls/POOL_BC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Pool_LP  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K36me3", "/POOL_LP/peak_calls/POOL_LP.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Pool_LC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K36me3", "/POOL_LC/peak_calls/POOL_LC.hg38_treat_pileup.bw")
+list_treat_pileup_bw_wasp_files_v2$H3K36me3$Pool_SC  <- str_c("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/pools/1/output2/",      "H3K36me3", "/POOL_SC/peak_calls/POOL_SC.hg38_treat_pileup.bw")
+```
+
+Load in top hit SPAAs for replication
+```{r}
+# Load in all SPAAs
+consensus.rpkm.bed.RData.files <- 
+  list.files(path = "/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/2/output2/spaas/annotated_rpkm", 
+             pattern = "*RData$", 
+             full.names = TRUE)
+
+consensus.all.spaas.rpkm.bed <- data.frame()
+for (i in seq_along(consensus.rpkm.bed.RData.files)) {
+  load(consensus.rpkm.bed.RData.files[i])
+  consensus.all.spaas.rpkm.bed <- bind_rows(consensus.all.spaas.rpkm.bed, consensus.spaa.rpkm.bed)
+  rm(consensus.spaa.rpkm.bed)
+}
+
+# Fix and convert to GRanges
+consensus.all.spaas.rpkm.bed <- 
+  consensus.all.spaas.rpkm.bed %>% 
+  rowwise() %>% 
+  mutate(RPKM_total    = sum(c_across(Individual_14_17_LP_DNA_RPKM:Individual_15_18_LC_RNA_DNA_RPKM)),
+         RPKM_variance = var(c_across(Individual_14_17_LP_DNA_RPKM:Individual_15_18_LC_RNA_DNA_RPKM))) %>% 
+  as.data.frame() %>% 
+  mutate(rs = na_if(rs, "NA")) %>% 
+  makeGRangesFromDataFrame(keep.extra.columns = TRUE, 
+                           ignore.strand = TRUE, 
+                           starts.in.df.are.0based = TRUE,
+                           seqinfo = seqinfo(BSgenome.Hsapiens.UCSC.hg38))
+```
+
+Import top hits
+```{r}
+# Import list of top hits
+top_hits <- read.csv("data/top_hits.csv") %>% pull(Variant)
+# Get ranges of the top hits
+top_hits_ranges <- consensus.all.spaas.rpkm.bed %>% plyranges::filter(rs %in% top_hits)
+```
+
+Keep only non-redundant top hits ranges
+```{r}
+# Keep only non-redundant top hits ranges
+# Add alt allele letter using top_hits_alleles tibble
+top_hits_ranges_relevant_modalities <-
+  top_hits_ranges %>% 
+  plyranges::slice(16, 14, 6, 10, 12, 1, 17, 3, 4) %>% 
+  keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+```
+
+Set up tibble containing file directories
+```{r}
+ase_rnaseq_dir <- "/projects/edcc_new/production/rnaseq"
+ase_rnaseq_mammary_folders <- 
+  c("E00613","E00614","E00615","E00616","A95045","A95046","A95047","A95048",
+    "B04746","B04747","B04748","B04749","B19822","B19823","B19824","B19825",
+    "B19826","B19827","B19828","B19829","B92604","B92605","B92606","B92607",
+    "B33203","B33204","B33205","B33206","B33207","B33208","B33209","B33210")
+
+ase_file_finder <- 
+  function(identifying_string, sample_id) {
+    system(str_c("find ", ase_rnaseq_dir,"/", sample_id , " -name '*", identifying_string,"' | head -n+1 "), intern = TRUE)
+  }
+
+ase_file_type_strings <- c("toGenome.markdup.bam", "toTranscriptome.bam","Unique.minusRaw.bw", "UniqueMultiple.minusRaw.bw",
+                           "Unique.plusRaw.bw","stats.json", "UniqueMultiple.plusRaw.bw"  ,"genes.results", "contigs.bed", "isoforms.results"  )
+ase_file_types <- c("bam", "bam", "bigWig", "bigWig", "bigWig", "json", "bigWig", "tsv", "bed", "tsv")
+
+ase_mammary_file_paths <- 
+  parallel::mclapply(ase_rnaseq_mammary_folders, function(y) {
+    lapply(ase_file_type_strings, function(x) {ase_file_finder(x, y)}) %>% 
+      unlist() %>% 
+      data.frame(sample_id = y, file_type = ase_file_types, file_path = .)
+  }, mc.cores = 32) %>% 
+  do.call("rbind", .)
+
+# Filtering and cleanup
+ase_mammary_file_paths <- 
+  ase_mammary_file_paths %>% 
+  filter(str_detect(file_path, "toGenome.markdup.bam$")) %>% # Only keep dupmarked BAMs mapped to hg38
+  right_join(read_csv("data/CEMT_Sample_Tracking_Axel_RNA_Only.csv"), .) %>% # Add Axel annotations
+  mutate(file_dir = file_path %>% stringi::stri_sub_replace(from = -35, to = -1, value = "")) # Add file directory
+```
+
+Metadata index
+```{r}
+cemt_table <- 
+  tibble(cemt = list.files("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/1/output2/H3K4me3/", include.dirs = TRUE) %>% rep(6),
+         individual_number = c(rep("1", 4), rep("2", 4), rep("3", 4), rep("4", 4), rep("5", 4), rep("6", 4), rep("7", 4), rep("8", 4)) %>% rep(6),
+         mark = c(rep("H3K4me3", 8*4), rep("H3K27ac", 8*4), rep("H3K4me1", 8*4), rep("H3K9me3", 8*4), rep("H3K27me3", 8*4), rep("H3K36me3", 8*4)),
+         celltype = rep(c("BC", "LP", "LC", "SC"), 192/4))
+```
+
+# Read in ENCODE ChIP blacklist
+```{r}
+blacklist_encode <- 
+  read_bed("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/genome_data/blacklists/hg38-blacklist.v2.bed") %>% keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse")
+```
+
+Load gene coordinates
+```{r}
+# Load gene info from GENCODE gff3
+gencode_v43 <- read_gff3("data/gencode/gencode.v43.annotation.gff3.gz")
+gencode_v43_basic <- read_gff3("data/gencode/gencode.v43.basic.annotation.gff3.gz")
+```
+
+Load biomart gene info
+```{r}
+# Load gene information to test allelic balance across
+biomart_gene_info <- 
+  getBM(attributes = c("chromosome_name", 
+                       "start_position", 
+                       "end_position", 
+                       "hgnc_symbol",
+                       "ensembl_gene_id",
+                       "entrezgene_id"),
+        mart = useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl"))
+
+biomart_gene_info <- 
+  biomart_gene_info %>% 
+  `colnames<-`(c("seqnames", "start", "end", "hgnc_symbol", "ensembl_gene_id", "entrezgene_id")) %>% 
+  mutate(seqnames = str_c("chr", seqnames)) %>% 
+  makeGRangesFromDataFrame(keep.extra.columns = TRUE, 
+                           ignore.strand = TRUE, 
+                           starts.in.df.are.0based = TRUE) %>% 
+  keepSeqlevels(const_canonical_chromosomes, pruning.mode = "coarse") %>% 
+  sort()
+```
+
+
+
+

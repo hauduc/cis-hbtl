@@ -1,0 +1,315 @@
+---
+title: "qPCR Analysis"
+output: html_notebook
+---
+```{r}
+#!/gsc/software/linux-x86_64-centos7/R-4.1.3/lib64/R/bin/R
+# R 4.1.3
+# x86_64-centos7-linux-gnu
+# x86_64-centos7-linux-gnu
+# Load constants
+source("/projects/epigenomics3/epigenomics3_results/users/ahauduc/arp/project/modules/notebook/alignment_analysis/source/setup.R")
+```
+
+# Read in qPCR results
+# Only keep the most recent qPCR with all your true control MCF10A samples
+```{r}
+qpcr_3 <- readxl::read_excel("data/qPCR/2023-07-11 qPCR-ViiA7-export.xls", sheet = "Results", skip = 39)
+```
+
+Establish metadata
+```{r}
+# Genes
+qpcr_3_treatment_genes <- c("ANXA1")
+qpcr_3_control_genes   <- c("GAPDH", "CCSER2")
+
+# Samples
+qpcr_3_control_samples   <- c("MCF10A_2_3_1", "MCF10A_2_1_2", "MCF10A_2_2_2", "MCF10A_2_3_2")
+qpcr_3_treatment_samples <- c("100-2-1", "100_2_8", "100-2-21", "100-2-50")
+qpcr_3_reference_samples <- c("100_7")
+
+# Conversion table to new sample names
+qpcr_3_sample_names_conversion <-
+  tibble(`Sample Name` = c(qpcr_3_control_samples, qpcr_3_treatment_samples),
+         `MCF10A line` = c("control 1 (2.3.1)", "control 2 (2.1.2)", "control 3 (2.2.2)", "control 4 (2.3.2)",
+                           "edited 1 (100-2-1)", "edited 2 (100-2-8)", "edited 3 (100-2-21)", "edited 4 (100-2-50)"))
+```
+
+# Process qPCR results
+# IGNORE REPS
+```{r}
+qpcr_3_summarized <- 
+  qpcr_3 %>% 
+  select(`Sample Name`,
+         `Target Name`,
+         `Ct Mean`,
+         `Ct SD`) %>% # select relevant rows
+  left_join(qpcr_3_sample_names_conversion, by = join_by(`Sample Name`)) %>% 
+  drop_na(`Ct Mean`) %>% # drop NTC rows
+  distinct(`Sample Name`,
+           `Target Name`,
+           .keep_all = TRUE) %>% 
+  mutate(Run = "3",
+         Status = case_when(`Sample Name` %in% qpcr_3_control_samples   ~ "control",
+                            `Sample Name` %in% qpcr_3_treatment_samples ~ "edited") %>% factor(c("control", "edited"))) %>% 
+  filter(`Sample Name` != "100_7") %>% # remove the reference sample for this run
+  pivot_wider(id_cols = c(Run,
+                          Status,
+                          `Sample Name`,
+                          `MCF10A line`),
+              names_from = `Target Name`,
+              names_prefix = "mean Ct ",
+              values_from = `Ct Mean`) %>% 
+  mutate(`ΔCt ANXA1 - GAPDH` = `mean Ct ANXA1` - `mean Ct GAPDH`,
+         `ΔCt ANXA1 - CCSER2` = `mean Ct ANXA1` - `mean Ct CCSER2`,
+         `ΔCt ANXA1 - mean(GAPDH, CCSER2)` = `mean Ct ANXA1` - mean(c(`mean Ct GAPDH`, `mean Ct CCSER2`))) %>% 
+  arrange(c(4,3,2,1,8,7,6,5)) # fix the order issue caused by having the 384 plate flipped
+```
+
+# Plot 2^-ΔΔCt
+# Prepare tibble for downstream plotting
+```{r}
+qpcr_3_summarized_prepped <-
+  qpcr_3_summarized %>% 
+  
+  # Modify sample names
+  mutate(`Sample Name` = `Sample Name` %>% factor(c("control", qpcr_3_control_samples, " ", "edited", qpcr_3_treatment_samples)),
+         `MCF10A line` = `MCF10A line` %>% factor(qpcr_3_sample_names_conversion$`MCF10A line`)) %>% 
+  
+  # ANXA1 vs GAPDH processing
+  mutate(`ΔCt ANXA1 vs GAPDH mean of control samples` = qpcr_3_summarized %>% filter(Status == "control") %>% pull(`ΔCt ANXA1 - GAPDH`) %>% mean()) %>% 
+  mutate(`ΔΔCt ANXA1 vs GAPDH` = `ΔCt ANXA1 - GAPDH` - `ΔCt ANXA1 vs GAPDH mean of control samples`) %>% 
+  mutate(`2^-ΔΔCt ANXA1 vs GAPDH` = 2^-(`ΔCt ANXA1 - GAPDH` - `ΔCt ANXA1 vs GAPDH mean of control samples`)) %>% 
+  
+  # ANXA1 vs CCSER2
+  mutate(`ΔCt ANXA1 vs CCSER2 mean of control samples` = qpcr_3_summarized %>% filter(Status == "control") %>% pull(`ΔCt ANXA1 - CCSER2`) %>% mean()) %>% 
+  mutate(`ΔΔCt ANXA1 vs CCSER2` = `ΔCt ANXA1 - CCSER2` - `ΔCt ANXA1 vs CCSER2 mean of control samples`) %>% 
+  mutate(`2^-ΔΔCt ANXA1 vs CCSER2` = 2^-(`ΔCt ANXA1 - CCSER2` - `ΔCt ANXA1 vs CCSER2 mean of control samples`)) %>% 
+  
+  # ANXA1 vs mean(GAPDH, CCSER2)
+  mutate(`ΔCt ANXA1 vs mean(GAPDH, CCSER2) mean of control samples` = qpcr_3_summarized %>% filter(Status == "control") %>% pull(`ΔCt ANXA1 - mean(GAPDH, CCSER2)`) %>% mean()) %>% 
+  mutate(`ΔΔCt ANXA1 vs mean(GAPDH, CCSER2)` = `ΔCt ANXA1 - mean(GAPDH, CCSER2)` - `ΔCt ANXA1 vs mean(GAPDH, CCSER2) mean of control samples`) %>% 
+  mutate(`2^-ΔΔCt ANXA1 vs mean(GAPDH, CCSER2)` = 2^-(`ΔCt ANXA1 - mean(GAPDH, CCSER2)` - `ΔCt ANXA1 vs mean(GAPDH, CCSER2) mean of control samples`))
+```
+
+# Plot
+```{r}
+#### Plot 2^-ΔΔCt ALL SAMPLES (but still remove repeats)
+# Dotplot
+qpcr_3_summarized_prepped %>% 
+  ggplot(aes(x = Status, y = `2^-ΔΔCt ANXA1 vs GAPDH`)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(aes(color = `MCF10A line`), position = "jitter") +
+  ggsignif::geom_signif(comparisons = list(c("control", "edited")),
+                        test = "wilcox.test",
+                        map_signif_level = TRUE,
+                        y_position = qpcr_3_summarized_prepped$`2^-ΔΔCt ANXA1 vs GAPDH` %>% max() %>% `+`(0.1)) +
+  labs(x = element_blank()) +
+  theme_bw()
+ggsave("plots/qpcr_3_combined_plot_2^-delta_delta_ct_ANXA1_vs_control_GAPDH.png",
+       units = "in",
+       dpi = 600,
+       width =  5,
+       height = 4)
+
+
+# Plot CCSER2
+#### Plot 2^-ΔΔCt ALL SAMPLES (but still remove repeats)
+# Dotplot
+qpcr_3_summarized_prepped %>% 
+  ggplot(aes(x = Status, y = `2^-ΔΔCt ANXA1 vs CCSER2`)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(aes(color = `MCF10A line`), position = "jitter") +
+  ggsignif::geom_signif(comparisons = list(c("control", "edited")),
+                        test = "wilcox.test",
+                        map_signif_level = TRUE,
+                        y_position = qpcr_3_summarized_prepped$`2^-ΔΔCt ANXA1 vs CCSER2` %>% max() %>% `+`(0.1)) +
+  labs(x = element_blank()) +
+  theme_bw()
+ggsave("plots/qpcr_3_combined_plot_2^-delta_delta_ct_ANXA1_vs_control_CCSER2.png",
+       units = "in",
+       dpi = 600,
+       width =  5,
+       height = 4)
+
+# Plot mean GAPDH & CCSER2
+#### Plot 2^-ΔΔCt ALL SAMPLES (but still remove repeats)
+# Dotplot
+qpcr_3_summarized_prepped %>% 
+  ggplot(aes(x = Status, y = `2^-ΔΔCt ANXA1 vs mean(GAPDH, CCSER2)`)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(aes(color = `MCF10A line`), position = "jitter") +
+  ggsignif::geom_signif(comparisons = list(c("control", "edited")),
+                        test = "wilcox.test",
+                        map_signif_level = TRUE,
+                        y_position = qpcr_3_summarized_prepped$`2^-ΔΔCt ANXA1 vs mean(GAPDH, CCSER2)` %>% max() %>% `+`(0.1)) +
+  labs(x = element_blank()) +
+  theme_bw()
+ggsave("plots/qpcr_3_combined_plot_2^-delta_delta_ct_ANXA1_vs_control_GAPDH_CCSER2.png",
+       units = "in",
+       dpi = 600,
+       width =  5,
+       height = 4)
+```
+
+# ###################### ###################### ###################### ###################### ###################### ###################### ###################### ###################### #####################
+# Statistical tests
+# Delta delta CT
+```{r}
+# Significance analysis
+# Do a t.test per https://stats.stackexchange.com/questions/120821/tests-for-comparing-qpcr-results-%CE%94%CE%94c%D1%82-values
+# GAPDH control
+t.test(
+  qpcr_3_summarized_prepped %>% filter(Status == "control") %>% pull(`ΔCt ANXA1 - GAPDH`),
+  qpcr_3_summarized_prepped %>% filter(Status == "edited")   %>% pull(`ΔCt ANXA1 - GAPDH`),
+  alternative = "greater",
+  var.equal = TRUE) %>% 
+  broom::tidy()
+
+# CCSER2 control
+t.test(
+  qpcr_3_summarized_prepped %>% filter(Status == "control") %>% pull(`ΔCt ANXA1 - CCSER2`),
+  qpcr_3_summarized_prepped %>% filter(Status == "edited")   %>% pull(`ΔCt ANXA1 - CCSER2`),
+  alternative = "greater",
+  var.equal = TRUE) %>% 
+  broom::tidy()
+
+# Combined controls
+t.test(
+  qpcr_3_summarized_prepped %>% filter(Status == "control") %>% pull(`ΔCt ANXA1 - mean(GAPDH, CCSER2)`),
+  qpcr_3_summarized_prepped %>% filter(Status == "edited")   %>% pull(`ΔCt ANXA1 - mean(GAPDH, CCSER2)`),
+  alternative = "greater",
+  var.equal = TRUE) %>% 
+  broom::tidy()
+```
+
+# Mean 2^-ΔΔCts
+```{r}
+# Vs GAPDH
+qpcr_3_summarized_prepped %>% filter(Status == "edited") %>% pull(`2^-ΔΔCt ANXA1 vs GAPDH`) %>% mean()
+
+# Vs CCSER2
+qpcr_3_summarized_prepped %>% filter(Status == "edited") %>% pull(`2^-ΔΔCt ANXA1 vs CCSER2`) %>% mean()
+
+# Vs mean(GAPDH, CCSER2)
+qpcr_3_summarized_prepped %>% filter(Status == "edited") %>% pull(`2^-ΔΔCt ANXA1 vs mean(GAPDH, CCSER2)`) %>% mean()
+```
+
+# Analysis of raw Cts and error rates
+```{r}
+# Keep only group means and standard deviations
+# Prep
+qpcr_3_cts <-
+  qpcr_3 %>% 
+  select(`Sample Name`,
+         `Target Name`,
+         `Ct Mean`,
+         `Ct SD`) %>% # select relevant rows
+  left_join(qpcr_3_sample_names_conversion) %>% 
+  drop_na(`Ct Mean`) %>% # drop NTC rows
+  distinct(`Sample Name`,
+           `Target Name`,
+           .keep_all = TRUE) %>% 
+  mutate(Run = "3",
+         Status = case_when(`Sample Name` %in% qpcr_3_control_samples   ~ "control",
+                            `Sample Name` %in% qpcr_3_treatment_samples ~ "edited"),
+         `Target Name` = `Target Name` %>% factor(c("ANXA1", "GAPDH", "CCSER2"))) %>% 
+  filter(`Sample Name` != "100_7") %>% 
+  mutate(`Sample Name` = `Sample Name` %>% factor(c("control", qpcr_3_control_samples, " ", "edited", qpcr_3_treatment_samples)),
+         `MCF10A line` = `MCF10A line` %>% factor(qpcr_3_sample_names_conversion$`MCF10A line`))
+
+# Plot barplot showing raw Ct values for all categories
+qpcr_3_cts %>% 
+  ggplot(aes(x = `MCF10A line`, y = `Ct Mean`, fill = `Target Name`)) +
+  geom_bar(position = "dodge", stat = "identity", alpha = 0.75, color = "black") +
+  geom_errorbar(aes(ymin = `Ct Mean` - `Ct SD`, ymax = `Ct Mean` + `Ct SD`), width = 0.2, position = position_dodge(0.9)) +
+  coord_cartesian(ylim    = c(18,28)) +
+  scale_y_continuous(breaks = 18:28) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.4)) +
+  guides(color = "none") +
+  ggh4x::facet_nested(~ `Target Name` + Status, scales = "free_x") +
+  labs(y = "Ct", 
+       fill = "gene")
+ggsave("plots/qpcr_3_barplot_ct_error_rates.png")
+
+# Plot box and whiskers plots with points
+qpcr_3_cts %>% 
+  ggplot(aes(x = Status, y = `Ct Mean`)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(aes(color = `MCF10A line`), position = "jitter") +
+  scale_y_continuous(breaks = 17:28) +
+  labs(x = element_blank()) +
+  facet_grid(~ `Target Name`) +
+  theme_bw() +
+  labs(y = "Ct")
+ggsave("plots/qpcr_3_boxplot_ct_error_rates.png")
+```
+
+# ############################################################################################################################################################################################################
+# Analysis of delta Cts of samples between conditions based on discussion with Martin & Michelle 2023-07-28
+```{r}
+# Calculate ANXA1 delta Ct directly between groups
+qpcr_3_cts_direct_comparison <-
+  qpcr_3_cts %>% 
+  filter(`Target Name` == "ANXA1") %>% 
+  mutate(mean_ct_of_controls = qpcr_3_cts %>% filter(`Target Name` == "ANXA1", Status == "control") %>% pull(`Ct Mean`) %>% mean()) %>%
+  mutate(delta_ct_vs_mean_ct_of_controls = `Ct Mean` - mean_ct_of_controls) %>% 
+  mutate(`2^-ΔCt ANXA1` = 2^-delta_ct_vs_mean_ct_of_controls) %>% 
+  mutate(Status = Status %>% factor(c("control", "edited")))
+
+# Plot with all points labelled
+qpcr_3_cts_direct_comparison %>% 
+  ggplot(aes(x = Status, y = `2^-ΔCt ANXA1`)) +
+  #geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(aes(color = `MCF10A line`), position = "jitter") +
+  ggsignif::geom_signif(comparisons = list(c("control", "edited")),
+                        test = "wilcox.test",
+                        map_signif_level = TRUE, 
+                        tip_length = 0) +
+  scale_y_continuous(breaks = c(1, 1.2, 1.4, 1.6, 1.8, 2, 2.2)) +
+  labs(x = element_blank()) +
+  theme_bw()
+ggsave("plots/qpcr_3_direct_comparison_combined_plot_2^-delta_ct_ANXA1_treatment_vs_control_v3_colors.png",
+       units = "in",
+       dpi = 600,
+       width =  4,
+       height = 5)
+
+# Plot for figure
+qpcr_3_cts_direct_comparison %>% 
+  ggplot(aes(x = Status, y = `2^-ΔCt ANXA1`)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point() +
+  ggsignif::geom_signif(
+    y_position = 2.2, 
+    xmin = 1, 
+    xmax = 2,
+    annotation = t.test(qpcr_3_cts_direct_comparison %>% filter(Status == "control") %>% pull(`Ct Mean`),
+                        qpcr_3_cts_direct_comparison %>% filter(Status == "edited") %>% pull(`Ct Mean`))$p.value %>% gtools::stars.pval(), 
+    tip_length = 0.015) + 
+  scale_y_continuous(breaks = c(0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2, 2.2), limits = c(0, 2.26)) +
+  labs(x = element_blank()) +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(), 
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(), 
+        panel.grid.minor.y = element_blank())
+ggsave("plots/paper_fig.4c_qpcr_3_direct_comparison_combined_plot_2^-delta_ct_ANXA1_treatment_vs_control_v3_no_colors.png",
+       units = "in",
+       dpi = 600,
+       width =  3.0 * 0.60,
+       height = 5.0 * 0.60)
+
+# Calculate exact values
+# Mean (linear scale) expression increase of ANXA1 between treatment and control samples
+qpcr_3_cts_direct_comparison %>% filter(Status == "edited") %>% pull(`2^-ΔCt ANXA1`) %>% mean()
+
+# Statistical test of Ct values
+t.test(qpcr_3_cts_direct_comparison %>% filter(Status == "control") %>% pull(`Ct Mean`),
+       qpcr_3_cts_direct_comparison %>% filter(Status == "edited") %>% pull(`Ct Mean`))
+```
